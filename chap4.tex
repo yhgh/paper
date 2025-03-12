@@ -3,7 +3,11 @@
 
 \section{引言}
 \label{sec:RANSAC-TRO-SQPnP:intro}
-在上一章中，已经针对单张图像的关键点检测进行了相关研究，并获取了非合作目标关键点在图像中的像素坐标。为了从这些像素坐标中计算出空间非合作目标的6D姿态，需要再结合空间非合作目标先验的标准6D姿态的3D关键点求解PnP进而得出空间非合作目标的6D姿态。大多数研究通过P3P\cite{chen2019satellite,s22218541,Guo_2022}，EPnP\cite{li2022learning,huan2020pose,lotti2022investigating}算法进行求解，但是这些算法是基于几何与代数的方法。考虑到上一章的关键点检测模型预测出的关键点像素坐标存在一定的噪声，并且在一些遮挡，过暗等极端条件下，噪声明显偏大。为了更有效解决关键点检测网络预测出的关键点的噪声问题，本章决定采用一种基于重投影误差优化的求解方案SQPnP\cite{terzakis2020consistently}， 考虑到了关键点检测模型在一些极端场景中估计出的点中存在一定量的异常点对估计结果的精度会造成较大的影响。本章引入了RANSAC，通过随机选取关键点的子集输入SQPnP，得出重投影误差最小的子集作为内点从而得到排除异常点的估计结果。考虑到SQPnP以优化旋转矩阵R为核心，平移向量t的估计则是依赖于R求出的，这导致t与R存在一定的耦合，会导致最终优化收敛受到一定的影响。因此本章在RANSAC SQPnP求解的结果上再施加信赖域优化(TRO, Trust Region Optimization )最终使得结果收敛到了更高的精度。因此本章提出并研究了一种结合RANSAC、SQPnP信赖域优化（TRO的PnP(Perspective-n-Point)求解算法，称为RANSAC-TRO SQPnP。通过在面对噪声、外点干扰以及旋转-平移耦合等问题，分别利用 RANSAC 剔除外点、SQPnP 提供关键点噪声鲁棒的及 TRO 对6D姿态的解进行局部精细优化，从而达到了更高的精度。
+在上一章中，本文已针对单张图像的关键点检测进行了深入研究，并成功获取了非合作目标关键点在图像中的像素坐标。为了从这些像素坐标中精确计算出空间非合作目标的6D姿态，需要将这些2D像素坐标与非合作目标先验的标准6D姿态下的3D关键点结合，通过求解PnP（Perspective-n-Point）问题进而得出空间非合作目标的完整6D姿态。现有研究中，大多数工作采用P3P\cite{chen2019satellite,s22218541,Guo_2022}或EPnP\cite{li2022learning,huan2020pose,lotti2022investigating}等算法进行求解。
+然而，上一章所提出的关键点检测模型预测的关键点像素坐标不可避免地存在一定的噪声，特别是在目标遮挡、光照不足等极端条件下，这种噪声会显著增大。为了更有效地应对PnP求解过程中关键点检测网络预测出的较大噪声，本章采用了一种基于重投影误差优化的求解方案SQPnP\cite{terzakis2020consistently}。该方法能够在关键点存在较大噪声的情况下，仍然保持较高的姿态估计精度。
+进一步考虑到，在极端场景中，关键点检测模型可能产生一定比例的异常点（outliers），这些异常点会对估计结果的精度造成显著影响。为了解决这一问题，本章引入了随机采样一致性（Random Sample Consensus，RANSAC）算法，通过随机选取关键点子集输入SQPnP，并选择重投影误差最小的子集作为内点（inliers），从而有效排除异常点的干扰，提高姿态估计的鲁棒性。
+值得注意的是，SQPnP算法以优化旋转矩阵$R$为核心，而平移向量$t$的估计则是基于$R$求解得出，这导致t与R之间存在一定程度的耦合，可能会对最终优化收敛产生不利影响。针对这一问题，本章在RANSAC-SQPnP求解的结果基础上，进一步引入信赖域优化（Trust Region Optimization，TRO）技术，通过对旋转和平移参数进行解耦和精细优化，最终使得结果收敛到更高精度。
+基于上述分析，本章提出并详细研究了一种结合RANSAC、SQPnP和信赖域优化的PnP求解算法，称为RANSAC-TRO-SQPnP。该算法通过三个关键组件的有机结合，有效应对了实际应用中面临的多重挑战。具体而言，RANSAC组件负责识别并剔除异常点，提高算法的鲁棒性；SQPnP组件提供对关键点噪声的适应能力，保证基础姿态估计的准确性；而TRO组件则对初步估计的6D姿态进行局部精细优化，解决旋转与平移参数的耦合问题。实验结果表明，所提出的RANSAC-TRO-SQPnP方法能够显著提高非合作目标6D姿态估计的精度和鲁棒性，特别是在关键点检测存在较大噪声和异常点的复杂场景中表现出色。
 
 
 \section{基于SQPnP的PnP问题求解}
@@ -93,7 +97,7 @@
 \end{equation}
 
 综上所述，上述模型完整地建模了从相机坐标系到图像平面像素坐标的投影过程，是PnP问题求解中的关键环节。
-。		
+
 \begin{figure}[htbp]
 	\centering
 	\includegraphics[width=0.8\textwidth]{Img/distortion.png}
@@ -355,28 +359,21 @@ RANSAC 中的置信度（confidence）指的是“所求得的模型包含真实
 	\item \textbf{TRO 细化}：针对上一阶段得到的旋转和平移初解，利用信赖域优化（TRO）策略，在内点集合上进行非线性最小二乘优化，迭代更新位姿直至收敛或达到迭代上限。
 \end{itemize}
 
-该伪代码\autoref{alg:RANSAC_TRO_SQPnP}可分为两大循环：外层循环执行 RANSAC 随机采样与初值估计，内层循环则执行 TRO 对初值的精细化。在 TRO 步骤中，每次迭代都会计算当前的残差和雅可比，并依此构造或近似出局部二次模型，然后在受限的“信赖域”半径 $\Delta$ 内寻找步长。如果实际误差改进和预测改进的比率 $\rho$ 较大，则认为方向与步长有效，进而可能扩大信赖域；否则就收缩信赖域，重新搜索更小步长，从而在局部寻优时保证稳定性。
-
-\paragraph{主要信赖域参数：}
+该伪代码\autoref{alg:RANSAC_TRO_SQPnP}可分为两大循环：外层循环执行 RANSAC 随机采样与初值估计，内层循环则执行 TRO 对初值的精细化。在 TRO 步骤中，每次迭代都会计算当前的残差和雅可比，并依此构造或近似出局部二次模型，然后在受限的“信赖域”半径 $\Delta$ 内寻找步长。如果实际误差改进和预测改进的比率 $\rho$ 较大，则认为方向与步长有效，进而可能扩大信赖域；否则就收缩信赖域，重新搜索更小步长，从而在局部寻优时保证稳定性。信赖域优化的参数如下：
 \begin{itemize}
 	\item \textbf{$\Delta$}（信赖域半径）：
 	用于限制当次迭代的步长大小，若步长超过 $\Delta$，则会被截断在该半径内。若某次迭代的实际改进率 $\rho$ 较高，说明模型对目标函数的预测准确、步长有效，则在下一次迭代可适当增大 $\Delta$；反之则减小。
 	
 	\item \textbf{\texttt{ftol}、\texttt{xtol}、\texttt{gtol}}：
-	在代码认设置为 $10^{-8}$，分别控制收敛判据中函数值、参数更新量和梯度范数的容差。具体含义是：
-	\begin{itemize}
-		\item \texttt{ftol}：若目标函数（重投影误差平方和）的相对变化量小于 \texttt{ftol}，则判定收敛；
-		\item \texttt{xtol}：若步长（参数更新量）的范数小于 \texttt{xtol} 与当前参数范数的乘积，则视为收敛；
-		\item \texttt{gtol}：若梯度的无穷范数已足够小，则满足一阶最优性。
-	\end{itemize}
+	在代码认设置为 $10^{-8}$，分别控制收敛判据中函数值、参数更新量和梯度范数的容差。具体含义是，若目标函数（重投影误差平方和）的相对变化量小于 \texttt{ftol}，则判定收敛；若步长（参数更新量）的范数小于 \texttt{xtol} 与当前参数范数的乘积，则视为收敛；若梯度的无穷范数已足够小，则满足一阶最优性。
 	
-	\item \textbf{\texttt{max\_nfev}}：
+	\item \texttt{max\_nfev}：
 	最大函数评估（重投影误差计算）次数；若超限仍未收敛，则退出，以防在极端情况下陷入过多不收敛迭代。若用户不指定，常以 $100\times\text{参数维度}$ 的经验值做默认限制。
 	
-	\item \textbf{$\rho$}（改进率）：
+	\item $\rho$（改进率）：
 	反映了目标函数“实际误差下降量”与“二次模型预测下降量”的比值，用于判断当次迭代步长是否可接受，并据此更新 $\Delta$。当 $\rho$ 较大时，说明模型预测与实际误差相符，步长有效；当 $\rho$ 很小甚至为负值时，则表示步长无效，需要缩小信赖域。
 	
-	\item \textbf{\texttt{alpha}}（阻尼系数）：
+	\item \texttt{alpha}（阻尼系数）：
 	在部分实现中会结合高斯牛顿或 LM 思路，引入 \texttt{alpha} 来缓解病态问题。代码里设为很小值，并结合 $\Delta$ 更新做简单调节，但不一定需要像 LM 那样反复迭代调试。
 \end{itemize}
 
@@ -470,13 +467,13 @@ RANSAC 中的置信度（confidence）指的是“所求得的模型包含真实
 
 
 
-\section{PnP实验对比}
+\section{实验分析}
 \label{sec:RANSAC-TRO-SQPnP:ExperimentCompare}
 \vspace{1ex}
 
 在此小节，综合评估了本文提出的模型与几种常见的 PnP 方法对比。大多数研究者通常使用 EPnP \cite{EPnP} + RANSAC 来实现基础的鲁棒性，还有人结合 Levenberg-Marquardt (LM) 进行额外优化。在下表中一并展示了这些方法，与本文提出的 RANSAC-TRO SQPnP 进行对比。
 
-\subsection{多种 PnP 方法在 SPEED+ 上的对比}
+\subsection{PnP 方法在 SPEED+ 上的对比}
 \begin{table*}[!htbp]
 	\centering
 	\caption{在SPEED+合成数据集上的PnP算法对比}
@@ -501,101 +498,11 @@ RANSAC 中的置信度（confidence）指的是“所求得的模型包含真实
 
 \section{与其他空间非合作目标6D姿态估计方法的对比}
 \label{sec:RANSAC-TRO-SQPnP:OthersCompare}
-为了验证从关键点检测到最终 PnP 解算的\textbf{完整流程}在 6D 姿态估计上的有效性，进一步将本文方法与其他航天器姿态估计方法对比。其中，一些工作直接回归 6D 姿态或使用特定深度网络；而本文的方案先进行关键点检测，再用 RANSAC-TRO SQPnP 做解算。
-
-\subsection{评估指标}
-为了更好的与其他方法的精度进行对比，这里采用了SPEED与SPEED+数据集提出的指标以评估本文方法在平移的精度，旋转的精度以及综合的精度。
-\subsubsection{指标定义}
-
-\begin{itemize}
-	\item $err_{\text{t}}$: 真值与预测位置之间的归一化相对误差，表示位置估计的相对精度。该分数无量纲，提供了对位置误差的尺度无关度量。定义如下：
-	\begin{equation}
-		err_{t,i} = \frac{\| r_{\text{true},i} - r_{\text{pred},i} \|_2}{\| r_{\text{true},i} \|_2}.
-	\end{equation}
-	
-	\begin{equation}
-		err_t = \frac{1}{N} \sum\limits_{i=1}^{N} err_{t,i}.
-	\end{equation}
-	
-	其中 $r_{\text{true},i}$ 和 $r_{\text{pred},i}$ 分别为第 $i$ 个样本的真值和预测位置向量，$N$ 表示样本总数。
-	
-	\item $err_{\text{T}}$: 表示真值与预测位置之间的绝对位置误差（单位：米）。该误差度量了预测位置与真实位置之间的欧几里得距离。
-	\begin{equation}
-		err_T = \frac{1}{N}\sum\limits_{i=1}^{N} \| r_{\text{true},i} - r_{\text{pred},i} \|_2.
-	\end{equation}
-	
-	其中 $r_{\text{true},i}$ 和 $r_{\text{pred},i}$ 分别为第 $i$ 个样本的真值和预测位置向量，$N$ 表示样本总数。
-	
-	\item $err_{\text{ort}}^{\text{rad}}$: 通过比较预测姿态和真实姿态的相对方向来度量姿态误差，单位为弧度。该度量强调相对度量相比绝对度量的优势。定义如下：
-	\begin{equation}
-		err_{\text{ort, i}}^{\text{rad}} =  2 \cdot \arccos \left( \left| \langle q_{\text{pred},i}, q_{\text{true},i} \rangle \right| \right).
-	\end{equation}
-	
-	\begin{equation}
-		err_{\text{ort}}^{\text{rad}} = \frac{1}{N}\sum\limits_{i=1}^N err_{\text{ort, i}}^{\text{rad}}.
-	\end{equation}
-	
-	其中 $q_{\text{pred},i}$ 和 $q_{\text{true},i}$ 分别为第 $i$ 个样本的预测与真实姿态四元数，$N$ 表示样本总数，$\langle \cdot, \cdot \rangle$ 表示四元数的内积。
-	
-	\item $err_{\text{ort}}^{\circ}$: 以度数形式表示的 $err_{\text{ort}}$。定义如下：
-	\begin{equation}
-		err_{\text{ort, i}}^{\circ} =  \frac{180}{\pi}^{\circ} err_{\text{ort, i}}^{\text{rad}}.
-	\end{equation}
-	\begin{equation}
-		err_{\text{ort}}^{\circ} = \frac{1}{N}\sum\limits_{i=1}^N err_{\text{ort, i}}^{\circ}. 
-	\end{equation}
-	
-	\item $score_{\text{pst}}$: SPEED 数据集中的位置评分，数值越低表示精度越高。定义如下：
-	\begin{equation}
-		score_{\text{pst}} = err_{\text{t}}.
-	\end{equation}
-	
-	\item $score_{\text{ort}}$: SPEED 数据集中的姿态评分，数值越低表示精度越高。定义如下：
-	\begin{equation}
-		score_{\text{ort}} = err_{\text{ort}}^{\text{rad}}.
-	\end{equation}
-	
-	\item $score$: SPEED 数据集的总评分，将位置和姿态的结果进行综合，作为 6D 姿态估计的整体评价指标。定义如下：
-	\begin{equation}
-		score = score_{\text{ort}} + score_{\text{pst}}.
-	\end{equation}
-	该综合评分在同时考虑位置和姿态准确度的情况下提供单一指标来评估整体表现，得分越低说明精度越高。
-	
-	\item $score_{\text{pst}}^+$: SPEED+ 数据集中的位置评分。定义如下：
-	\begin{equation}
-		score_{\text{pst, i}}^+ = 
-		\begin{cases}
-			0, & \text{if } err_{\text{t, i}} < 0.002173 \\
-			err_{\text{t, i}}, & \text{otherwise}
-		\end{cases}.
-	\end{equation}
-	
-	\begin{equation}
-		score_{\text{pst}}^+ = \frac{1}{N}\sum\limits_{i=1}^N score_{\text{pst, i}}^+.
-	\end{equation}
-	
-	\item $score_{\text{ort}}^+$: SPEED+ 数据集中的姿态评分。定义如下：
-	\begin{equation}
-		score_{\text{ort, i}}^+ = 
-		\begin{cases}
-			0, & \text{if } err_{\text{ort, i}}^{\circ} < 0.169^\circ \\
-			err_{\text{ort, i}}^{\text{rad}}, & \text{otherwise}
-		\end{cases}.
-	\end{equation}
-	\begin{equation}
-		score_{\text{ort}}^+ = \frac{1}{N}\sum\limits_{i=1}^N score_{\text{ort, i}}^+.
-	\end{equation}
-	
-	\item $score^+$: SPEED+ 数据集官方评价中的综合评分，基于位置和姿态的单独评估，分数越低表示精度越高。定义如下：
-	\begin{equation}
-		score^+ = \frac{1}{N}\sum\limits_{i=1}^N(score_{\text{ort, i}}^+ + score_{\text{pst, i}}^+).
-	\end{equation}
-	
-\end{itemize}
+为了验证从关键点检测到最终 PnP 解算的完整流程在 6D 姿态估计上的有效性，进一步将本文方法与其他航天器姿态估计方法对比。其中，一些工作直接回归 6D 姿态或使用特定深度网络；而本文的方案先进行关键点检测，再用 RANSAC-TRO SQPnP 做解算。
 
 
 \subsection{SPEED数据集上的对比}
-如表\ref{tab:SPEED_Comparison}所示，部分方法的旋转或平移误差略优，但其模型参数量相对巨大，且实验场景可能不同。本文的方法在相对小模型条件下取得了较好的综合精度，尤其对于资源受限的实际空间平台更具潜力。
+如表\ref{tab:SPEED_Comparison}所示，本文所提出的方法的精度尽管不如参数量更大的某些模型，但是本文的参数量做大了最小，并且还由于部分参数量较大的模型。这使得其在部署到资源受限的空间平台上成为可能。
 \begin{table}[htbp]
 	\centering
 	\caption{在SPEED合成数据集上6D航天器姿态估计方法的性能比较}
@@ -604,9 +511,8 @@ RANSAC 中的置信度（confidence）指的是“所求得的模型包含真实
 		\toprule
 		方法 & $err_{\text{T}}$ & $err_{\text{ort}}^{\circ}$ & 参数量(M) \\
 		\midrule
-		\citet{chen2019satellite} & \textbf{0.0320} & \textbf{0.4100} & $\sim$49.8 \\
 		\citet{gerard2019segmentation} & 0.0730 & 0.9100 & $\sim$59.1 \\
-		\citet{lotti2022investigating} & 0.0340 & 0.5200 & 15.4 \\
+		\citet{lotti2022investigating} & \textbf{0.0340} & \textbf{0.5200} & 15.4 \\
 		\citet{wang2022revisiting} & 0.0391 & 0.6638 & $\sim$47.8 \\
 		\citet{park2019towards} & 0.2090 & 2.6200 & 11.17 \\
 		\citet{piazza2021deep} & 0.1036 & 2.2400 & $\sim$36.1 \\
@@ -616,7 +522,7 @@ RANSAC 中的置信度（confidence）指的是“所求得的模型包含真实
 	\end{tabular}
 \end{table}
 \subsection{SPEED+数据集上的对比}
-表\ref{tab:SPEEDplus_Comparison} 展示了在 SPEED+ 上各方法的详细对比。可见本文方法在旋转与位置综合评分 $score^+$ 上取得较好结果，小模型就能超过 YOLOv8n-pose、YOLOv8s-pose 等基线；随着模型规模增大，精度进一步提升，与同类大型网络如 SPNv2 相比也具备竞争力。
+表\ref{tab:SPEEDplus_Comparison} 展示了在 SPEED+ 上各方法的详细对比。可见本文方法在旋转$score_{\text{ort}}^+$与位置综合评分 $score^+$ 上取得较好结果，small级别的模型也能超越部分参数量和FLOPs较大的模型；考虑到SPEED+数据集规模是SPEED数据的4倍，，因此本章在小规模参数模型的基础上，增加了medium级别与large级别的参数量模型。随着模型规模增大，精度进一步提升，对于large级别的模型其精度超过了与同类大型网络SPNv2($\phi$=6 GN)，而参数量与FLOPs却均小于SPNv2($\phi$=6 GN)。这证明本文的模型在架构上也是具有优越性的。
 \begin{table*}[htbp]
 	\centering
 	\caption{SPEED+合成数据集上6D航天器姿态估计方法的性能比较}
