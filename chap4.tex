@@ -1,1 +1,292 @@
-xxxxxx
+\chapter{基于RANSAC-TRO SQPnP的6D姿态解算方法}
+\label{chap:RANSAC-TRO-SQPnP}
+
+\section{引言}
+\label{sec:RANSAC-TRO-SQPnP:intro}
+在上一章中，已针对单张图像的关键点检测进行了研究，并成功获取了非合作目标关键点在图像中的像素坐标。为了从这些像素坐标中精确计算出空间非合作目标的6D姿态，需要将这些2D像素坐标与非合作目标先验的标准6D姿态下的3D关键点结合，通过求解PnP（Perspective-n-Point）问题进而得出空间非合作目标的完整6D姿态。现有研究中，大多数工作采用P3P\cite{chen2019satellite,s22218541,Guo_2022}或EPnP\cite{li2022learning,huan2020pose,lotti2022investigating}等算法进行求解。
+然而，上一章所提出的关键点检测模型预测的关键点像素坐标不可避免地存在一定的噪声，特别是在目标遮挡、光照不足等极端条件下，这种噪声会显著增大。为了更有效地应对PnP求解过程中关键点检测网络预测出的较大噪声，本章采用了一种基于重投影误差优化的求解方案SQPnP\cite{terzakis2020consistently}。该方法能够在关键点存在较大噪声的情况下，仍然保持较高的姿态估计精度。
+进一步考虑到，在极端场景中，关键点检测模型可能产生一定比例的异常点，这些异常点会对估计结果的精度造成显著影响。为了解决这一问题，本章引入了随机采样一致性（Random Sample Consensus，RANSAC）算法，通过随机选取关键点子集输入SQPnP，并选择重投影误差最小的子集作为内点（inliers），从而有效排除异常点的干扰，提高姿态估计的鲁棒性。
+值得注意的是，SQPnP算法以优化旋转矩阵$R$为核心，而平移向量$t$的估计则是基于$R$求解得出，这导致$t$与$R$之间存在一定程度的耦合，可能会对最终优化收敛产生不利影响。针对这一问题，本章在RANSAC-SQPnP求解的结果基础上，进一步引入信赖域优化（Trust Region Optimization，TRO）技术，通过对旋转和平移参数进行解耦和精细优化，最终使得结果收敛到更高精度。
+基于上述分析，本章提出并详细研究了一种结合RANSAC、SQPnP和信赖域优化的PnP求解算法，称为RANSAC-TRO-SQPnP。该算法通过三个关键组件的有机结合，有效应对了实际应用中面临的多重挑战。具体而言，RANSAC组件负责识别并剔除异常点，提高算法的鲁棒性；SQPnP组件提供对关键点噪声的适应能力，保证基础姿态估计的准确性；而TRO组件则对初步估计的6D姿态进行局部精细优化，解决旋转与平移参数的耦合问题。实验结果表明，所提出的RANSAC-TRO SQPnP方法能够显著提高非合作目标6D姿态估计的精度和鲁棒性，特别是在关键点检测存在较大噪声和异常点的复杂场景中表现出色。
+
+
+\section{基于SQPnP的PnP问题求解}
+\label{sec:RANSAC-TRO-SQPnP:SQPnP}
+\vspace{1ex}
+
+在空间非合作目标6D姿态测量中，经常使用的算法有EPnP, P3P，但是由于关键点预测模型预测出的关键点存在一定的噪声，像EPnP，P3P这类基于传统几何与代数的解算方法的鲁棒性不够强，而SQPnP算法\cite{terzakis2020consistently}由于重投影误差优化问题的思路进行入手，加上其巧妙的优化问题建模方式，优化求解手段，使得其不像LM, GN等方法还需要传统的几何与代数解法的结果作为初值。可以在一开始就进行独立求解，并逐步收敛至更为精确的解。
+\subsection{相机模型}
+在构建PnP问题的方程中，相机投影是必不可少的一个环节。为了对相机投影进行建模，需要借助经典的针孔相机模型（pinhole camera model）和相机内参（焦距，主点坐标，畸变参数），同时考虑了实际成像中常见的镜头畸变。SPEED/SPEED+数据集已包含相机的内参，Nauka MLM与Starlink的渲染也沿用了同样的相机内参。
+
+
+
+相机的内参矩阵$\mathbf{K}$为
+\begin{equation}
+	\mathbf{K} =  
+	\begin{bmatrix}
+		2988.5795 & 0 & 960 \\
+		0 & 2988.3401 & 600 \\
+		0 & 0 & 1
+	\end{bmatrix},
+	\label{eq:cameraMatrix}
+\end{equation}
+其中，$f_x=2988.5795$和$f_y=2988.3401$分别为水平方向和竖直方向的焦距，而$(c_x, c_y)=(960,600)$为图像主点坐标。该矩阵描述了相机坐标系向图像平面投影时的缩放和平移关系。图~\ref{fig:distortion_patterns}展示了在无畸变、仅径向畸变以及切向畸变条件下，棋盘格的不同扭曲效果。
+
+
+为描述镜头在成像过程中产生的非理想投影效应，引入如下畸变系数：
+\begin{equation}
+	\boldsymbol{\kappa} = 
+	\begin{bmatrix}
+		k_1 \\[2pt] k_2 \\[2pt] p_1 \\[2pt] p_2 \\[2pt] k_3
+	\end{bmatrix}
+	=
+	\begin{bmatrix}
+		-0.22383\\[2pt]
+		0.51410\\[2pt]
+		-0.000665\\[2pt]
+		-0.000214\\[2pt]
+		-0.13124
+	\end{bmatrix}.
+\end{equation}
+
+其中，$k_1$, $k_2$, $k_3$为径向畸变系数，而$p_1$, $p_2$为切向畸变系数。
+
+
+径向畸变主要有镜头的形状不标准引起，对于径向畸变，如图~\ref{fig:distortion_patterns}所示，棋盘格呈现半径方向上的扭曲。设归一化平面上点的坐标为$(x,y)$，其径向距离为
+\begin{equation}
+	r^2 = x^2 + y^2.
+\end{equation}
+仅考虑径向畸变时，校正后的坐标$(x_d,y_d)$为
+\begin{equation}
+	\begin{aligned}
+		x_{d} &= x\Bigl(1 + k_1r^2 + k_2r^4 + k_3r^6\Bigr),\\[2pt]
+		y_{d} &= y\Bigl(1 + k_1r^2 + k_2r^4 + k_3r^6\Bigr).
+	\end{aligned}
+\end{equation}
+
+
+切向畸变主要由镜头与图像传感器未完全平行引起，如图~\ref{fig:distortion_patterns}所示，图像局部出现倾斜或剪切现象。其校正模型为
+\begin{equation}
+	\begin{aligned}
+		x_{d} &= x + 2p_1 xy + p_2\Bigl(r^2 + 2x^2\Bigr),\\[2pt]
+		y_{d} &= y + p_1\Bigl(r^2 + 2y^2\Bigr) + 2p_2 xy.
+	\end{aligned}
+\end{equation}
+
+在实际标定中，通常需同时考虑径向和切向畸变。将两者叠加后，归一化平面上点$(x,y)$校正后的坐标$(x_d,y_d)$由下式给出：
+\begin{equation}
+	\begin{aligned}
+		x_{d} &= x\Bigl(1 + k_1r^2 + k_2r^4 + k_3r^6\Bigr)
+		+ 2p_1 xy + p_2\Bigl(r^2 + 2x^2\Bigr),\\[2pt]
+		y_{d} &= y\Bigl(1 + k_1r^2 + k_2r^4 + k_3r^6\Bigr)
+		+ p_1\Bigl(r^2 + 2y^2\Bigr) + 2p_2 xy,
+	\end{aligned}
+	\label{eq:comprehensive_distortion}
+\end{equation}
+其中$r^2=x^2+y^2$。随后，通过内参矩阵$\mathbf{K}$将校正后的归一化坐标映射到图像平面像素坐标$(u,v)$：
+\begin{equation}
+	\begin{bmatrix}
+		u \\[2pt]
+		v \\[2pt]
+		1
+	\end{bmatrix}
+	=
+	\mathbf{K}
+	\begin{bmatrix}
+		x_d \\[2pt]
+		y_d \\[2pt]
+		1
+	\end{bmatrix}.
+\end{equation}
+
+上述模型完整地建模了从相机坐标系到图像平面像素坐标的投影过程，这是PnP问题求解过程中的相机平面投影的过程的关键参数模型。
+
+\begin{figure}[htbp]
+	\centering
+	\includegraphics[width=0.8\textwidth]{Img/distortion.png}
+	\caption{不同畸变模型下的棋盘格示意图：左图为无畸变情形，中图显示典型的径向畸变，右图为切向畸变。}
+	\label{fig:distortion_patterns}
+\end{figure}
+
+\subsection{SQPnP 优化问题建模}
+PnP（Perspective-n-Point）问题可表述为：给定 $n$ 对空间点和图像点的对应关系，求解相机的旋转矩阵 $R$ 和平移向量 $t$。这里可以将其转化为一个带约束的优化问题，即在保证 $R$ 为正交矩阵的条件下最小化重投影误差的平方和。令旋转矩阵 $R$ 的9个元素按行（或列）展开组成向量 $x \in \mathbb{R}^9$，那么优化目标可表示为一个关于 $x$ 的二次型，而正交性条件则转化为 $x$ 满足的约束方程组。具体地，消去平移 $t$ 后得到的代价函数可写成：
+
+\begin{equation}
+	\min_{x \in \mathbb{R}^9}   x^\top \Omega x
+	\quad \text{s.t.} \quad
+	h(x) = \mathbf{0}_6
+\end{equation}
+
+其中 $\Omega$ 是由观测数据计算得到的 $9 \times 9$ 宽松正定（PSD）矩阵。  
+$h(x) = \mathbf{0}_6$ 则表示一组等式约束，使得当 $h(x)=\mathbf{0}$ 时，$x$ 恰好对应一个旋转矩阵。若记
+\begin{equation}
+	x = 
+	\begin{bmatrix}
+		r_{1:3} \\[2pt]
+		r_{4:6} \\[2pt]
+		r_{7:9}
+	\end{bmatrix}
+	\quad\text{(其中每个 }r_{i:i+2}\text{均为}\mathbb{R}^3\text{向量)},
+\end{equation}
+则可写出正交性约束：
+\begin{equation}
+	h(x)  = 
+	\begin{bmatrix}
+		r_{1:3}^\top r_{1:3}  -  1 \\
+		r_{4:6}^\top r_{4:6}  -  1 \\
+		r_{7:9}^\top r_{7:9}  -  1 \\
+		r_{1:3}^\top r_{4:6} \\
+		r_{1:3}^\top r_{7:9} \\
+		r_{4:6}^\top r_{7:9}
+	\end{bmatrix}
+	= 
+	\mathbf{0}_6 
+\end{equation}
+\subsection{SQPnP旋转矩阵 R 的求解}
+采用序列二次规划（SQP）方法来求解上述带约束的非线性二次规划问题。SQP 的核心思想是：在迭代的每一步，将当前问题在附近用二次函数近似其目标函数、并用线性函数近似其约束条件，从而形成一个线性约束的二次规划（LCQP）子问题。通过求解该子问题可以得到原问题的一个改进解，如此迭代直至收敛。对于PnP 问题，由于目标函数本身已经是二次型（$x^\top \Omega x$），因此在 $R$ 的当前估计值附近，其二次近似就是自身；而约束的线性化则来自对正交性约束 $h(x)=0$ 做一阶泰勒展开。具体来说，设第 $k$ 次迭代的当前解为 $x^{(k)} = r^{(k)}$（对应旋转矩阵 $R^{(k)}$），则令增量 $\delta = x - r^{(k)}$。目标函数关于 $\delta$ 的展开为：
+\begin{equation}
+	f\bigl(r^{(k)} + \delta\bigr)
+	= \bigl(r^{(k)} + \delta\bigr)^{\top} \Omega \bigl(r^{(k)} + \delta\bigr)
+	= r^{(k)\top}\Omega r^{(k)}  +  2 r^{(k)\top}\Omega \delta  +  \delta^\top\Omega \delta
+\end{equation}
+其中常数项 $r^{(k)\top}\Omega r^{(k)}$ 可略去。约束函数的线性化为：
+\begin{equation}
+	h\bigl(r^{(k)} + \delta\bigr)
+	\approx 
+	h\bigl(r^{(k)}\bigr)
+	+ 
+	H_{r^{(k)}} \delta
+	= 
+	\mathbf{0}_6
+\end{equation}
+其中 $H_{r^{(k)}} = \frac{\partial h}{\partial x}\big|_{x=r^{(k)}}$ 是在当前点计算的 $6\times 9$ 雅可比矩阵。若当前解 $r^{(k)}$ 已满足约束（即 $h(r^{(k)})=\mathbf{0}$，例如选择初始解时取满足 $R^\top R=I$ 的矩阵），则线性化可简化为
+\begin{equation}
+	H_{r^{(k)}} \delta  =  \mathbf{0}
+\end{equation}
+即使 $r^{(k)}$ 初始不完全可行，线性约束
+\begin{equation}
+	H_{r^{(k)}} \delta 
+	=  
+	- h(r^{(k)})
+\end{equation}
+也会逐步将解拉回可行域。这样，第 $k$ 步迭代的局部子问题可表述为：
+\begin{equation}
+	\min_{\delta \in \mathbb{R}^9} 
+	\quad 
+	\delta^\top \Omega  \delta 
+	+  2 r^{(k)\top} \Omega  \delta
+	\quad 
+	\text{s.t.} 
+	\quad 
+	H_{r^{(k)}} \delta 
+	=  
+	- h(r^{(k)})
+\end{equation}
+
+这是一个带线性等式约束的凸二次优化问题。可以通过拉格朗日乘子条件将其转化为线性方程组求解。构建拉格朗日函数
+\begin{equation}
+	\mathcal{L}(\delta, \lambda) 
+	=  
+	\delta^\top \Omega  \delta 
+	+  
+	2 r^{(k)\top}\Omega \delta 
+	+ 
+	\lambda^\top \bigl(H_{r^{(k)}} \delta + h(r^{(k)})\bigr)
+\end{equation}
+对 $\delta$ 和拉格朗日乘子向量 $\lambda$ 求导并令其为零，即可得到 KKT 条件所对应的线性方程组：
+\begin{equation}
+	\begin{pmatrix}
+		2 \Omega & H_{r^{(k)}}^\top \\
+		H_{r^{(k)}} & \mathbf{0}_{6\times 6}
+	\end{pmatrix}
+	\begin{pmatrix}
+		\delta^* \\
+		\lambda^*
+	\end{pmatrix}
+	= 
+	\begin{pmatrix}
+		- 2 \Omega r^{(k)} \\
+		- h(r^{(k)})
+	\end{pmatrix}
+\end{equation}
+
+解此线性方程组即可得到优化方向增量 $\delta^*$ 以及对应的拉格朗日乘子 $\lambda^*$。然后将旋转向量更新为
+\begin{equation}
+	r^{(k+1)} 
+	= 
+	r^{(k)} + \delta^*
+\end{equation}
+（必要时可结合步长或信赖域策略保证收敛），并重复上述过程，直到增量范数足够小而收敛。通过这种 SQP 迭代，在每一步都满足（或逐步逼近）旋转矩阵的正交约束，并不断降低目标函数，最终得到满足 $R^\top R=I$ 的最优旋转矩阵解 $R^*$。
+\subsection{平移向量$t$的求解}
+在确定了旋转矩阵 $R$ 之后，平移向量 $t$ 可以通过最小二乘闭式求解。由于上述代价函数在消去 $t$ 后成为 $x^\top \Omega x$，这实际上等价于：对于任意给定的 $R$，都可直接找到使误差最小的 $t$ 表达式。这由对原始未消元的目标函数关于 $t$ 的偏导为零条件得到。具体而言，利用先前定义的 $A_i$ 和 $Q_i$ 矩阵，令 $\mathbf{r} = \operatorname{vec}(R)$ 为旋转的9维向量，对 $t$ 求导并令梯度为零，可得到如下线性方程：
+
+\begin{equation} 
+	\sum_{i=1}^n Q_i \big(A_i \mathbf{r} + t\big) =  \mathbf{0}_3
+\end{equation}
+
+其中 $A_i \mathbf{r} = R X_i$ 表示旋转后的第 $i$ 个空间点坐标在相机坐标系下的表示（以向量形式融入等式），$Q_i$ 则与该点的观测有关的权矩阵。将上式整理，可得到关于 $t$ 的线性方程组：
+
+\begin{equation} 
+	\Big(\sum_{i=1}^n Q_i\Big)  t = - \sum_{i=1}^n Q_i A_i \mathbf{r}
+\end{equation}
+
+在通常情况下，矩阵 $\sum_i Q_i$ 是非奇异的（这相当于所有点的方向约束提供了充分信息）。因此可以直接求解得到
+
+\begin{equation} 
+	t = -\Big(\sum_{i=1}^n Q_i\Big)^{-1} \sum_{i=1}^n Q_i A_i \mathbf{r}  
+\end{equation}
+
+即 $t$ 关于 $\mathbf{r}$ 为线性关系，可写为 $t = P \mathbf{r}$。其中矩阵 $P = -(\sum_i Q_i)^{-1}(\sum_i Q_i A_i)$ 可以在给定所有观测点后预先计算。当利用上述 SQP 方法得到最终最优旋转 $\mathbf{r}^*$ 时，只需代入此公式即可得到对应的最优平移 $t^*$。由于这一求解过程实质上是对原目标关于 $t$ 的线性最小二乘优化，因而计算高效且解是全局最优的。值得一提的是，在实际实现中，不必每次迭代都重新计算 $t$；通常可以在主迭代外层，当旋转收敛后再一次性求出最终 $t$，或者在需要评估当前解的实际投影误差时临时计算相应的 $t$ 值。
+
+在确定了旋转矩阵 $R$ 之后，平移向量 $t$ 可以通过最小二乘闭式求解。由于上述代价函数在消去 $t$ 后成为 $x^\top \Omega x$，这实际上等价于：对于任意给定的 $R$，都可直接找到使误差最小的 $t$ 表达式。这由对原始未消元的目标函数关于 $t$ 的偏导为零条件得到。具体而言，利用先前定义的 $A_i$ 和 $Q_i$ 矩阵，令 $\mathbf{r} = \operatorname{vec}(R)$ 为旋转的9维向量，对 $t$ 求导并令梯度为零，可得到如下线性方程：
+
+\begin{equation}
+	\sum_{i=1}^n Q_i  \big(A_i \mathbf{r} + t\big) = \mathbf{0}_3
+\end{equation}
+
+其中 $A_i \mathbf{r} = R X_i$ 表示旋转后的第 $i$ 个空间点坐标在相机坐标系下的表示（以向量形式融入等式），$Q_i$ 则与该点的观测有关的权矩阵。将上式整理，可得到关于 $t$ 的线性方程组：
+
+\begin{equation}
+	\Big(\sum_{i=1}^n Q_i\Big) t  = - \sum_{i=1}^n Q_i A_i \mathbf{r}
+\end{equation}
+
+在通常情况下，矩阵 $\sum_i Q_i$ 是非奇异的，因此可以直接求解得到
+
+\begin{equation}
+	t  = - \Big(\sum_{i=1}^n Q_i\Big)^{-1} \sum_{i=1}^n Q_i A_i \mathbf{r}
+\end{equation}
+
+即 $t$ 关于 $\mathbf{r}$ 为线性关系，可写为 $t = P \mathbf{r}$。其中矩阵 $P = -(\sum_i Q_i)^{-1}(\sum_i Q_i A_i)$ 可以在给定所有观测点后预先计算。当利用上述 SQP 方法得到最终最优旋转 $\mathbf{r}^*$ 时，只需代入此公式即可得到对应的最优平移 $t^*$。由于这一求解过程实质上是对原目标关于 $t$ 的线性最小二乘优化，因而计算高效且解是全局最优的。值得一提的是，在实际实现中，不必每次迭代都重新计算 $t$；通常可以在主迭代外层，当旋转收敛后再一次性求出最终 $t$，或者在需要评估当前解的实际投影误差时临时计算相应的 $t$ 值。
+
+然而，$R$ 与 $t$ 之间存在一定的耦合关系。由于 $t$ 是通过最小二乘法根据已确定的 $R$ 求解得到的，这意味着平移向量 $t$ 的优化空间实际上是受到旋转矩阵 $R$ 的影响的。在优化过程中，旋转矩阵 $R$ 的变化直接决定了平移向量 $t$ 的求解方式，这种耦合限制了平移向量的搜索空间，从而影响了 $t$ 的进一步寻优。具体而言，若 $R$ 的求解精度较低，或者在某些特定情况下，平移向量 $t$ 的变化范围被压缩，使得平移的优化空间无法充分探索。后续在求解出的6D姿态上进行的优化算法能够进一步解决这个问题。
+\subsection{SQPnP的参数设置}
+表 \ref{tab:sqpnp-params} 列出了 SQPnP 算法中与迭代收敛和数值稳定性相关的主要参数设置。大多数收敛阈值如 \(\epsilon_{\mathrm{sqp}}\)、\(\epsilon_{\mathrm{orth}}\)、\(\epsilon_{\mathrm{vec}}\)、\(\epsilon_{\mathrm{err}}\) 等，都是为了控制迭代更新、旋转正交性、多解筛选以及重投影误差等方面的精度，确保在满足一定精度的前提下及时停止计算，从而避免无意义的过度迭代。退化判断阈值 \(\epsilon_{\mathrm{var}}\) 用于识别输入数据是否有较大共线、共面或分布极为不平衡等情况，从而在必要时提前终止或进行特殊处理。最大迭代次数 \(K_{\mathrm{max}}\) 则在确保精度的同时，防止算法在极端场景下因数值问题而陷入死循环或过度迭代。通过合理设置这些参数，可以在保证求解精度的同时，提高算法的稳定性和效率。
+\begin{table}[htbp]
+	\centering
+	\caption{SQPnP的主要参数设置}
+	\label{tab:sqpnp-params}
+	\begin{tabular}{l c p{7.5cm}}
+		\toprule
+		\textbf{参数} & \textbf{数值} & \textbf{功能} \\
+		\midrule
+		
+		$\epsilon_{\mathrm{sqp}}$      & $10^{-10}$ & 
+		SQP 迭代更新量 $\|\delta\|^2$ 的收敛阈值，小于此值认为已充分收敛。\\[3pt]
+		
+		$\epsilon_{\mathrm{orth}}$     & $10^{-8}$  & 
+		判断当前旋转矩阵正交误差是否可忽略，例如 $\|R^\top R - I\|$ 是否足够小。\\[3pt]
+		
+		$\epsilon_{\mathrm{vec}}$      & $10^{-10}$ &
+		判断两个旋转向量是否几乎相同，以便在多解筛选或重复解检测时去重。\\[3pt]
+		
+		$\epsilon_{\mathrm{err}}$      & $10^{-6}$  &
+		判断两次重投影误差的平方和是否近似相等，避免无意义的细微迭代。\\[3pt]
+		
+		$\epsilon_{\mathrm{var}}$      & $10^{-5}$  &
+		判断输入点分布或观测矩阵是否退化（如共线、共面）；低于此值可能无法得到有效解。\\[3pt]
+		
+		$K_{\mathrm{max}}$             & 15         &
+		SQP 算法最大迭代步数上限，用于防止在极端情况下陷入死循环或过度迭代。\\
+		\bottomrule
+	\end{tabular}
+\end{table}
