@@ -35,19 +35,20 @@
 
 为描述镜头在成像过程中产生的非理想投影效应，引入如下畸变系数：
 \begin{equation}
-	\boldsymbol{\kappa} = 
+	\boldsymbol{\kappa} =
 	\begin{bmatrix}
 		k_1 \\[2pt] k_2 \\[2pt] p_1 \\[2pt] p_2 \\[2pt] k_3
 	\end{bmatrix}
 	=
 	\begin{bmatrix}
-		-0.22383\\[2pt]
-		0.51410\\[2pt]
-		-0.000665\\[2pt]
-		-0.000214\\[2pt]
-		-0.13124
-	\end{bmatrix}.
+		-2.2383e-1\\[2pt]
+		5.1410e-1\\[2pt]
+		-6.65e-4\\[2pt]
+		-2.14e-4\\[2pt]
+		-1.3124e-1
+	\end{bmatrix}
 \end{equation}
+
 
 其中，$k_1$, $k_2$, $k_3$为径向畸变系数，而$p_1$, $p_2$为切向畸变系数。
 
@@ -290,3 +291,279 @@ $h(x) = \mathbf{0}_6$ 则表示一组等式约束，使得当 $h(x)=\mathbf{0}$ 
 		\bottomrule
 	\end{tabular}
 \end{table}
+
+
+
+\section{RANSAC 算法}
+\label{sec:RANSAC-TRO-SQPnP:RANSAC}
+
+RANSAC (\textbf{R}andom \textbf{S}ample \textbf{C}onsensus) 算法是一种在含有大量外点（outliers）的数据中估计模型参数的常用鲁棒方法。在本文的位姿估计（PnP）场景中，RANSAC 能够在匹配点中剔除错误对应，从而提升最终的姿态解算精度。
+
+\begin{enumerate}
+	\item \textbf{最小采样构造模型：}  
+	在所有 3D--2D 匹配点中，随机采样最小数量的点来估计一个局部模型（这里设置为 5 对点）。调用相应的 PnP 解算器获得临时的姿态解 $(\mathbf{rvec}, \mathbf{tvec})$。
+	
+	\item \textbf{一致性检测：}  
+	使用该临时姿态解对剩余所有点进行投影，并计算其与观测 2D 点的重投影误差。如果误差小于给定阈值（本文中取 $8$ 像素），则视为内点；否则视为外点。统计本次采样得到的内点数量。
+	
+	\item \textbf{模型优选与迭代：}  
+	记录当前内点数 $I$ 和对应的模型。如果 $I$ 大于当前最大内点数，则将该模型视为"最佳模型"，并更新"最大内点数"。接着进入下一次随机采样。为了在高概率（置信度）下找到最佳模型，需要进行多次迭代（例如 $10000$ 次），使得至少有一次采样"刚好"都来自内点集合。
+	
+	\item \textbf{内点重拟合：}  
+	当所有迭代结束后，取内点最多的那一次采样所得到的最佳模型，并将其内点集合提取出来。最后，用该内点集合再次调用一个 PnP 方法（如 EPNP、SQPnP 等）进行全局优化，以得到更准确的 $(\mathbf{rvec}, \mathbf{tvec})$。
+	
+	\item \textbf{输出结果：}  
+	将最终得到的 $(\mathbf{rvec}, \mathbf{tvec})$ 作为 RANSAC-PnP 的估计结果。若需要，可以输出该模型对应的内点掩码（inlier mask），以供后续可视化或误差统计。
+\end{enumerate}
+
+\subsection{置信度的定义与迭代次数}
+RANSAC 中的置信度（confidence）指的是"所求得的模型包含真实内点对应子集的概率"。若记
+\begin{itemize}
+	\item $w$ 为数据集中单个采样点是内点的概率（即内点比例）；
+	\item $n$ 为单次随机采样所需的最小点数（PnP 中通常为 $3$--$5$）；
+	\item $k$ 为 RANSAC 的迭代次数；
+	\item $\alpha$ 为期望的置信度（例如 $0.99$）。
+\end{itemize}
+则希望至少有一次采样能够全部来自内点的概率不低于 $\alpha$。记
+\begin{equation}
+	P(\text{一次采样全为内点})  =  w^n,
+\end{equation}
+则在 $k$ 次采样中都"碰巧"采到外点的概率为 $\bigl(1 - w^n \bigr)^k$。因此，在至少一次成功采样的概率达到 $\alpha$ 时，有
+\begin{equation}
+	1 - \bigl(1 - w^n \bigr)^k   \ge   \alpha,
+\end{equation}
+进而可推得
+\begin{equation}
+	k  \ge  \frac{\ln(1 - \alpha)}{\ln\bigl(1 - w^n\bigr)}.
+\end{equation}
+在实际应用中，$w$ 的确切数值往往无法先验获得，一般通过经验估计或先行试验来设置 $k$ 值，也可在迭代过程中动态更新。比如在多数组合计算后，若已获取满足当前内点比例的采样模型，则可提前终止。
+
+
+\vspace{1em}
+
+
+
+
+\section{信赖域优化}
+\label{sec:RANSAC-TRO-SQPnP:TRO}
+在非线性最小二乘问题中，Levenberg-Marquardt（LM）常见于姿态估计的优化。但在局部寻优时，LM 容易出现收敛不稳定的情况。信赖域优化（TRO, Trust Region Optimization）\cite{trf} 则通过在每一步迭代时仅在一个"信赖域"半径内近似目标函数，若实际改进率 $\rho$ 大则扩大信赖域，否则收缩，从而在步长搜索方面更具稳定性。
+
+对于刚体姿态而言，SQPnP 通常侧重旋转估计，平移只做后续线性求解，若两者耦合较强或初解不佳，则需对 $\mathbf{R}, \mathbf{t}$ 进行进一步非线性微调。TRO 能在当前解附近更稳健地搜索更优步长，相比 LM 不易陷入局部极值，数值上也更具鲁棒性。
+
+\section{RANSAC-TRO SQPnP算法}
+\label{sec:RANSAC-TRO-SQPnP:Algorithm}
+
+如伪代码~\ref{alg:RANSAC_TRO_SQPnP}所示，RANSAC-TRO SQPnP 的核心流程包括以下步骤：
+\begin{itemize}
+	\item \textbf{RANSAC 采样}：从原始点集中随机抽取少量 3D--2D 对，应满足 PnP 最小解的需求。计算其位姿并计算内点数量或重投影误差，重复多次，得到当前最优的位姿初值。
+	\item \textbf{提取内点}：根据重投影误差阈值 $\tau$，将重投影误差较小的点视为内点，形成更可靠的子集。
+	\item \textbf{TRO 细化}：针对上一阶段得到的旋转和平移初解，利用信赖域优化（TRO）策略，在内点集合上进行非线性最小二乘优化，迭代更新位姿直至收敛或达到迭代上限。
+\end{itemize}
+
+该伪代码\autoref{alg:RANSAC_TRO_SQPnP}可分为两大循环：外层循环执行 RANSAC 随机采样与初值估计，内层循环则执行 TRO 对初值的精细化。在 TRO 步骤中，每次迭代都会计算当前的残差和雅可比，并依此构造或近似出局部二次模型，然后在受限的"信赖域"半径 $\Delta$ 内寻找步长。如果实际误差改进和预测改进的比率 $\rho$ 较大，则认为方向与步长有效，进而可能扩大信赖域；否则就收缩信赖域，重新搜索更小步长，从而在局部寻优时保证稳定性。信赖域优化的参数如下：
+\begin{itemize}
+	\item \textbf{$\Delta$}（信赖域半径）：
+	用于限制当次迭代的步长大小，若步长超过 $\Delta$，则会被截断在该半径内。若某次迭代的实际改进率 $\rho$ 较高，说明模型对目标函数的预测准确、步长有效，则在下一次迭代可适当增大 $\Delta$；反之则减小。
+	
+	\item {\texttt{ftol}、\texttt{xtol}、\texttt{gtol}}：
+	在代码默认设置为 $10^{-8}$，分别控制收敛判据中函数值、参数更新量和梯度范数的容差。具体含义是，若目标函数（重投影误差平方和）的相对变化量小于 \texttt{ftol}，则判定收敛；若步长（参数更新量）的范数小于 \texttt{xtol} 与当前参数范数的乘积，则视为收敛；若梯度的无穷范数已足够小，则满足一阶最优性。
+	
+	\item \texttt{max\_nfev}：
+	最大函数评估（重投影误差计算）次数；若超限仍未收敛，则退出，以防在极端情况下陷入过多不收敛迭代。若用户不指定，常以 $100\times\text{参数维度}$ 的经验值做默认限制。
+	
+	\item $\rho$（改进率）：
+	反映了目标函数"实际误差下降量"与"二次模型预测下降量"的比值，用于判断当次迭代步长是否可接受，并据此更新 $\Delta$。当 $\rho$ 较大时，说明模型预测与实际误差相符，步长有效；当 $\rho$ 很小甚至为负值时，则表示步长无效，需要缩小信赖域。
+	
+	\item \texttt{alpha}（阻尼系数）：
+	在部分实现中会结合高斯牛顿或 LM 思路，引入 \texttt{alpha} 来缓解病态问题。代码里设为很小值，并结合 $\Delta$ 更新做简单调节，但不一定需要像 LM 那样反复迭代调试。
+\end{itemize}
+
+将 RANSAC 的内点集合带入到 TRO 的非线性最小二乘迭代中，结合上述各项参数的综合调控，可在局部寻优阶段获得更稳健的步长搜索与数值收敛。若初始估计较好，往往只需较少迭代便可达到满意的旋转和平移精度；若初值不够好或存在噪声与外点，则通过 TRO 优化 RANSAC SQPnP，仍可获得鲁棒稳定的最终解。
+\begin{algorithm}[!htbp]
+	\caption{RANSAC-TRO SQPnP}
+	\label{alg:RANSAC_TRO_SQPnP}
+	\begin{spacing}{0.9}  % 将行间距缩小到 0.9
+		\footnotesize        % 如果需要进一步缩小，可以换成 \scriptsize
+		\begin{algorithmic}[1]
+			\Procedure{RANSAC-TRO SQPnP}{$\mathbf{P},\mathbf{p},\mathbf{K},n,\tau,k_{\max},\epsilon_f,\epsilon_x,\epsilon_g,n_{\max}$}
+			\Comment{\parbox[t]{.85\linewidth}{
+					\textbf{输入:} 
+					$\mathbf{P}$: 3D点集, 
+					$\mathbf{p}$: 2D点集, 
+					$\mathbf{K}$: 相机内参矩阵, 
+					$n$: 每次随机采样的点数, 
+					$\tau$: 误差阈值, 
+					$k_{\max}$: 最大迭代次数, 
+					$\epsilon_f$: 函数容差, 
+					$\epsilon_x$: 参数容差, 
+					$\epsilon_g$: 梯度容差, 
+					$n_{\max}$: 最大函数评估次数.\\[4pt]
+					\textbf{输出:} 
+					$\mathbf{r}^*$: 最优旋转向量, 
+					$\mathbf{t}^*$: 最优平移向量, 
+					$\mathcal{I}^*$: 最佳内点集合
+			}}
+			
+			\State 初始化 $e^* \gets \texttt{MAX\_DOUBLE},\;\mathcal{I}^* \gets \emptyset$
+			
+			\For{$k \gets 1$ to $k_{\max}$}
+			\State 随机采样 $\mathcal{I}_k \gets \texttt{RandomSample}(n, |\mathbf{P}|)$
+			\State 提取对应点集 $\mathbf{P}_k \gets \mathbf{P}[\mathcal{I}_k]$, $\mathbf{p}_k \gets \mathbf{p}[\mathcal{I}_k]$
+			\State 姿态估计 $\mathbf{r}_k, \mathbf{t}_k \gets \texttt{SQPnP}(\mathbf{P}_k, \mathbf{p}_k, \mathbf{K})$
+			\State 计算误差 $e_k \gets \texttt{ReprojectError}(\mathbf{P}[\mathcal{I}_k], \mathbf{p}[\mathcal{I}_k], \mathbf{K}, \mathbf{r}_k, \mathbf{t}_k)$
+			\If{$e_k < e^*$}
+			\State 更新最优值 $e^* \gets e_k,\;\mathcal{I}^* \gets \mathcal{I}_k$
+			\State 存储最优姿态 $\mathbf{r}^* \gets \mathbf{r}_k,\;\mathbf{t}^* \gets \mathbf{t}_k$
+			\EndIf
+			\EndFor
+			
+			\State 使用最佳内点集合 $\mathbf{P}^* \gets \mathbf{P}[\mathcal{I}^*],\;\mathbf{p}^* \gets \mathbf{p}[\mathcal{I}^*]$
+			\State 初始化优化参数 $\mathbf{x} \gets [\mathbf{q}^*, \mathbf{t}^*]$
+			\State 计算初始误差 $\mathbf{f} \gets \texttt{ReprojectError}(\mathbf{P}^*, \mathbf{p}^*, \mathbf{K}, \mathbf{x}[0], \mathbf{x}[1])$
+			\State 计算雅可比矩阵 $\mathbf{J} \gets \texttt{Jacobian}(\mathbf{P}^*, \mathbf{p}^*, \mathbf{K}, \mathbf{x}[0], \mathbf{x}[1])$
+			\State 初始化计数器 $n_f, n_J \gets 1, 1$, $\mathbf{g} \gets \mathbf{J}^\top \mathbf{f}$, $i \gets 0$, $s \gets \texttt{None}$
+			
+			\While{未满足终止条件}
+			\If{$\|\mathbf{g}\|_\infty < \epsilon_g$}
+			\State $s \gets 1$
+			\State \textbf{break}
+			\EndIf
+			\State $\mathbf{g}_h, \mathbf{J}_h, \mathbf{U}, \mathbf{s}, \mathbf{V}, \mathbf{u}_f \gets \texttt{ComputeAproximateProblem}(\mathbf{J}, \mathbf{f})$
+			\While{$\rho \leq 0$ \textbf{ and } $n_f < n_{\max}$}
+			\State $\boldsymbol{\delta}_h, \boldsymbol{\delta}, \mathbf{x}_{\text{new}}, \mathbf{f}_{\text{new}} \gets \texttt{ComputeStep}(\mathbf{g}_h, \mathbf{J}_h, \mathbf{U}, \mathbf{s}, \mathbf{V}, \mathbf{u}_f, \mathbf{x}, \Delta)$
+			\State $n_f \gets n_f + 1$
+			\If{\textbf{not} \texttt{IsFinite}($\mathbf{f}_{\text{new}}$)}
+			\State $\Delta \gets \Delta \cdot 0.5$
+			\State \textbf{continue}
+			\EndIf
+			\State $\rho, \Delta_{\text{new}}, r, \|\boldsymbol{\delta}\| \gets \texttt{ComputeRatio}(\mathbf{f}, \mathbf{f}_{\text{new}}, \boldsymbol{\delta}_h, \Delta)$
+			\If{满足终止条件}
+			\State \textbf{break}
+			\EndIf
+			\State \texttt{Update}($\Delta$, $r$)
+			\EndWhile
+			
+			\If{$\rho > 0$}
+			\State 更新参数 $\mathbf{x}, \mathbf{f} \gets \mathbf{x}_{\text{new}}, \mathbf{f}_{\text{new}}$
+			\State 更新旋转和平移 $\mathbf{r}, \mathbf{t} \gets \mathbf{x}[0],\;\mathbf{x}[1]$
+			\State 重新计算雅可比矩阵和梯度 
+			$\mathbf{J}, \mathbf{g} \gets \texttt{Jacobian}(\mathbf{P}^*, \mathbf{p}^*, \mathbf{K}, \mathbf{r}, \mathbf{t}),\; \mathbf{J}^\top \mathbf{f}$
+			\State $n_J \gets n_J + 1$
+			\EndIf
+			\State $i \gets i + 1$
+			\EndWhile
+			
+			\If{$s$ 为 \texttt{None}}
+			\State $s \gets 0$
+			\EndIf
+			
+			\State 更新最终姿态 $\mathbf{r}^*, \mathbf{t}^* \gets \mathbf{x}[0], \mathbf{x}[1]$
+			\State \textbf{return} $\mathbf{r}^*, \mathbf{t}^*, \mathcal{I}^*$
+			\EndProcedure
+		\end{algorithmic}
+	\end{spacing}
+\end{algorithm}
+
+
+
+
+
+\section{实验分析}
+\label{sec:RANSAC-TRO-SQPnP:ExperimentCompare}
+\vspace{1ex}
+
+在此小节，综合评估了本文提出的模型与几种常见的 PnP 方法对比。大多数研究者通常使用 EPnP \cite{EPnP} + RANSAC 来实现基础的鲁棒性，还有人结合 Levenberg-Marquardt (LM) 进行额外优化。在下表中一并展示了这些方法，与本文提出的 RANSAC-TRO SQPnP 进行对比。
+
+\subsection{PnP 方法在 SPEED+数据集上的对比}
+\begin{table}[!htbp]
+	\centering
+	\caption{在SPEED+合成数据集上的PnP算法对比}
+	\setlength{\tabcolsep}{4.7mm}{
+		\begin{tabular}{lccc}
+			\toprule
+			方法 & $score_{\text{ort}}^+$ & $score_{\text{pst}}^+$ & $score^+$  \\ \midrule
+			EPnP \citep{EPnP} & 0.02539 & 0.01356 & 0.03896 \\
+			SQPnP \citep{terzakis2020consistently} & 0.02227 & 0.01247  & 0.03474 \\
+			RANSAC SQPnP & 0.01877 & 0.00860  & 0.02737 \\
+			LM \citep{lm} SQPnP & 0.02227 & 0.01446 & 0.03673 \\
+			RANSAC-LM SQPnP & \textbf{0.01875} & 0.00865 & 0.02739 \\
+			TRO \citep{trf} SQPnP & 0.02227 & 0.01251 & 0.03478 \\
+			\textbf{Ours (RANSAC-TRO SQPnP)} & 0.01878 & \textbf{0.00850} & \textbf{0.02728} \\ 
+			\bottomrule
+	\end{tabular}}
+	\label{tab:PnPCmp}
+\end{table}
+
+从表 \ref{tab:PnPCmp} 可见，与 EPnP 相比，SQPnP 在三个指标上都有明显提升，表明 SQPnP 的优化建模，优化求解手段对应关键点噪声更为鲁棒，使得求解精度明显高于 EPnP；RANSAC + SQPnP 的精度比单纯 SQPnP + LM 或 TRO 更优，说明异常点(外点)的存在确实会显著影响优化求解的过程，使其不能够收敛到理想的精度。如果首先选择去除外点则可以在不进行优化的情况下达到更优的精度。在 RANSAC-SQPnP 的基础上，对初始姿态进行 LM 和 TRO 两种后续优化时，LM 在 $score_{\text{ort}}^+$ 上略好一些，但 $score_{\text{pst}}^+$ 更差，导致最终 $score^+$ 下降；而 TRO 则在 $score_{\text{pst}}^+$ 与整体 $score^+$ 指标上优势更显著；这说明相对于 LM 优化，TRO 通过限制在信赖域上的优化，有利于局部更为精确的寻优从而在整体上达到更高的精度。
+
+
+\subsection{与其他空间非合作目标6D姿态估计方法的对比}
+\label{sec:RANSAC-TRO-SQPnP:OthersCompare}
+考虑到大量相关研究在SPEED/SPEED+数据集上进行了测试，因此这里的精度测试也在其进行。为了验证从关键点检测到最终 PnP 解算的完整流程在 6D 姿态估计上的有效性，进一步将本文方法与其他航天器姿态估计方法对比。其中，一些工作直接回归 6D 姿态或者使用关键点回归加上PnP解算。有的方法为了得到更高的精度采用热图的关键点预测方式；而本文的基于全局和局部注意力优化的改进YOLOv8-pose关键点检测网络直接回归关键点，并结合RANSAC-TRO SQPnP算法对关键点进行解算，从而在更小的计算复杂上，达到了相对不错的精度。
+
+
+\subsection{SPEED数据集上的对比}
+如表\ref{tab:SPEED_Comparison}所示，本文所提出的方法的精度尽管不如参数量更大的某些模型，但是本文的参数量最小，并且还优于部分参数量较大的模型。这使得其在部署到资源受限的空间平台上成为可能。
+\begin{table}[htbp]
+	\centering
+	\caption{在SPEED合成数据集上6D航天器姿态估计方法的性能比较}
+	\label{tab:SPEED_Comparison}
+	\begin{tabular}{lccc}
+		\toprule
+		方法 & $err_{\text{T}}$ & $err_{\text{ort}}^{\circ}$ & 参数量(M) \\
+		\midrule
+		\citet{gerard2019segmentation} & 0.0730 & 0.9100 & $\sim$59.1 \\
+		\citet{lotti2022investigating} & \textbf{0.0340} & \textbf{0.5200} & 15.4 \\
+		\citet{wang2022revisiting} & 0.0391 & 0.6638 & $\sim$47.8 \\
+		\citet{park2019towards} & 0.2090 & 2.6200 & 11.17 \\
+		\citet{piazza2021deep} & 0.1036 & 2.2400 & $\sim$36.1 \\
+		\citet{huan2020pose} & 0.1823 & 2.8723 & $\sim$63.6 \\
+		Ours & 0.1043 & 1.4076 & \textbf{4.3} \\
+		\bottomrule
+	\end{tabular}
+\end{table}
+
+\subsection{SPEED+数据集上的对比}
+表\ref{tab:SPEEDplus_Comparison} 展示了在 SPEED+ 上各方法的详细对比。可见本文方法在旋转$score_{\text{ort}}^+$与位置综合评分 $score^+$ 上取得较好结果，本文的small方法能够以4.3M的参数量，10.4GFLOPs的计算复杂度达到旋转误差small级别的模型也能超越部分参数量和FLOPs较大的模型；考虑到SPEED+数据集规模是SPEED数据的4倍，因此本章在小规模参数模型的基础上，增加了medium级别与large级别的参数量模型。随着模型规模增大，精度进一步提升，对于large级别的模型其精度超过了与同类大型网络SPNv2($\phi$=6 GN)，而参数量与FLOPs却均小于SPNv2($\phi$=6 GN)。这证明本文的模型在架构上也是具有优越性的。
+\begin{table*}[htbp]
+	\centering
+	\caption{SPEED+合成数据集上6D航天器姿态估计方法的性能比较}
+	\label{tab:SPEEDplus_Comparison}
+	\setlength{\tabcolsep}{0.5mm}{
+		\begin{tabular}{lcccccc}
+			\toprule
+			方法 & 参数量(M) & FLOPs(G) & $err_{\text{ort}}^{\circ}$ & $score_{\text{ort}}^+$ & $err_{\text{T}}$ & $score^+$ \\
+			\midrule
+			SPN\cite{sharma2019pose} & - & - & 7.7700 & - & 0.1600 & 0.1600 \\
+			KRN\cite{park2019towards} & - & - & 3.6900 & - & 0.1400 & 0.0900 \\
+			HigherHRNet \cite{higherhrnet} & $\sim 28.6\text{–}63.8$ & $\sim 74.9\text{–}154.3$ & 1.5100 & - & 0.0500 & 0.0400 \\
+			P\'erez-Villar et al. \citep{perez2022spacecraft} & 190.1 & 487.8 & 1.4700 & 0.0256 & - & 0.0355 \\
+			SPNv2($\phi$=3 GN) \cite{park2024robust} & 12.0 & 29.2 & 1.2240 & 0.0214 & 0.0560 & 0.0310 \\
+			SPNv2($\phi$=6 GN) \cite{park2024robust} & 52.5 & 148.5 & 0.8850 & 0.0154 & \textbf{0.0310} & 0.0210 \\
+			YOLOv8n-pose\cite{yolov8_ultralytics} & \textbf{3.2} & \textbf{9.1} & 2.1882 & 0.0382 & 0.0857 & 0.0546 \\
+			YOLOv8s-pose\cite{yolov8_ultralytics} & 11.6 & 30.2 & 1.5764 & 0.0275 & 0.0524 & 0.0395 \\
+			Ours small & 4.3 & 10.4 & 1.0760 & 0.0188 & 0.0459 & 0.0273 \\
+			Ours medium & 18.7 & 53.5 & 0.8078 & 0.0141 & 0.0533 & 0.0231 \\
+			Ours large & 47.2 & 145.5 & \textbf{0.6750} & \textbf{0.0118} & 0.0418 & \textbf{0.0189} \\
+			\bottomrule
+		\end{tabular}
+	}
+\end{table*}
+
+
+\subsection{估计结果可视化}
+
+本研究特别选择了SPEED+和SPEED数据集的示例来可视化本研究的最终结果。估计结果通过关键点和带有轴箭头的边界框来展示。绿色表示真实值，而红色表示预测结果。在合成数据集中，本研究首先可视化简单示例的预测结果。在图~\ref{fig:easy_demo}中，预测结果基本与真实值一致。在图~\ref{fig:hard_demo}中，展示了更困难的案例，其中一些表面难以辨别，遮挡更为明显。尽管如此，估计结果仍然与真实值非常接近。这证明了本研究方法的鲁棒性。
+
+SPEED数据集还提供了真实的Tango卫星照片，但没有姿态标注。本研究在图~\ref{fig:real_demo}中也可视化了本研究在这些图像上的估计结果。尽管精度不如在合成数据中观察到的高，这是一个有待改进的点。
+
+\begin{figure*}[!t] \centering \includegraphics[width=1\textwidth]{Img/easy_demo.pdf} \caption{SPEED+合成图像估计结果可视化的简单示例} \label{fig:easy_demo} \end{figure*}
+
+\begin{figure*}[!t] \centering \includegraphics[width=1\textwidth]{Img/hard_demo.pdf} \caption{SPEED+合成图像估计结果可视化的困难示例} \label{fig:hard_demo} \end{figure*}
+
+\begin{figure*}[htbp] \centering \includegraphics[width=1\textwidth]{Img/real_demo.pdf} \caption{在SPEED真实图像上的6D估计结果的实际示例} \label{fig:real_demo} \end{figure*}
+
+
+\section{本章小结}
+\label{sec:RANSAC-TRO-SQPnP:summary}
+本章围绕通过关键点检测与基于重投影误差优化的PnP算法相结合来求解非合作目标的6D姿态展开，首先在标准针孔模型和畸变模型的基础上推导了相机对3D关键点的投影关系；随后提出了结合正交约束的SQPnP算法，将旋转矩阵的求解视为带约束的非线性二次规划问题，通过序列二次规划方法迭代优化得到精确的旋转矩阵，并在此基础上线性求解平移向量；针对外点干扰，为了使估计对异常关键点更具鲁棒性，引入RANSAC随机采样与一致性检测以剔除外点；进而在获得精初值后，采用信赖域优化（TRO）对旋转和平移在局部区域内进一步非线性迭代精细求解，从而有效缓解旋转-平移之间的耦合影响；最后通过在SPEED与SPEED+等数据集上的实验，详细对比了RANSAC-TRO SQPnP与其他PnP算法及典型航天器姿态估计方法的精度与模型复杂度，结果表明RANSAC-TRO SQPnP在处理关键点噪声、剔除外点以及局部优化收敛性等方面均具有较高的鲁棒性和优异的精度表现。
