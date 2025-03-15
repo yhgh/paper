@@ -84,7 +84,7 @@
 	\end{aligned}
 	\label{eq:comprehensive_distortion}
 \end{equation}
-其中$r^2=x^2+y^2$。随后，通过内参矩阵$\mathbf{K}$将校正后的归一化坐标映射到图像平面像素坐标$(u,v)$：
+其中$r^2=x^2+y^2$。然后，通过内参矩阵$\mathbf{K}$将校正后的归一化坐标映射到图像平面像素坐标$(u,v)$：
 \begin{equation}
 	\begin{bmatrix}
 		u \\[2pt]
@@ -260,37 +260,6 @@ $h(x) = \mathbf{0}_6$ 则表示一组等式约束，使得当 $h(x)=\mathbf{0}$ 
 即 $t$ 关于 $\mathbf{r}$ 为线性关系，可写为 $t = P \mathbf{r}$。其中矩阵 $P = -(\sum_i Q_i)^{-1}(\sum_i Q_i A_i)$ 可以在给定所有观测点后预先计算。当利用上述 SQP 方法得到最终最优旋转 $\mathbf{r}^*$ 时，只需代入此公式即可得到对应的最优平移 $t^*$。由于这一求解过程实质上是对原目标关于 $t$ 的线性最小二乘优化，因而计算高效且解是全局最优的。值得一提的是，在实际实现中，不必每次迭代都重新计算 $t$；通常可以在主迭代外层，当旋转收敛后再一次性求出最终 $t$，或者在需要评估当前解的实际投影误差时临时计算相应的 $t$ 值。
 
 然而，$R$ 与 $t$ 之间存在一定的耦合关系。由于 $t$ 是通过最小二乘法根据已确定的 $R$ 求解得到的，这意味着平移向量 $t$ 的优化空间实际上是受到旋转矩阵 $R$ 的影响的。在优化过程中，旋转矩阵 $R$ 的变化直接决定了平移向量 $t$ 的求解方式，这种耦合限制了平移向量的搜索空间，从而影响了 $t$ 的进一步寻优。具体而言，若 $R$ 的求解精度较低，或者在某些特定情况下，平移向量 $t$ 的变化范围被压缩，使得平移的优化空间无法充分探索。后续在求解出的6D姿态上进行的优化算法能够进一步解决这个问题。
-\subsection{SQPnP的参数设置}
-表 \ref{tab:sqpnp-params} 列出了 SQPnP 算法中与迭代收敛和数值稳定性相关的主要参数设置。大多数收敛阈值如 \(\epsilon_{\mathrm{sqp}}\)、\(\epsilon_{\mathrm{orth}}\)、\(\epsilon_{\mathrm{vec}}\)、\(\epsilon_{\mathrm{err}}\) 等，都是为了控制迭代更新、旋转正交性、多解筛选以及重投影误差等方面的精度，确保在满足一定精度的前提下及时停止计算，从而避免无意义的过度迭代。退化判断阈值 \(\epsilon_{\mathrm{var}}\) 用于识别输入数据是否有较大共线、共面或分布极为不平衡等情况，从而在必要时提前终止或进行特殊处理。最大迭代次数 \(K_{\mathrm{max}}\) 则在确保精度的同时，防止算法在极端场景下因数值问题而陷入死循环或过度迭代。通过合理设置这些参数，可以在保证求解精度的同时，提高算法的稳定性和效率。
-\begin{table}[htbp]
-	\centering
-	\caption{SQPnP的主要参数设置}
-	\label{tab:sqpnp-params}
-	\begin{tabular}{l c p{7.5cm}}
-		\toprule
-		\textbf{参数} & \textbf{数值} & \textbf{功能} \\
-		\midrule
-		
-		$\epsilon_{\mathrm{sqp}}$      & $10^{-10}$ & 
-		SQP 迭代更新量 $\|\delta\|^2$ 的收敛阈值，小于此值认为已充分收敛。\\[3pt]
-		
-		$\epsilon_{\mathrm{orth}}$     & $10^{-8}$  & 
-		判断当前旋转矩阵正交误差是否可忽略，例如 $\|R^\top R - I\|$ 是否足够小。\\[3pt]
-		
-		$\epsilon_{\mathrm{vec}}$      & $10^{-10}$ &
-		判断两个旋转向量是否几乎相同，以便在多解筛选或重复解检测时去重。\\[3pt]
-		
-		$\epsilon_{\mathrm{err}}$      & $10^{-6}$  &
-		判断两次重投影误差的平方和是否近似相等，避免无意义的细微迭代。\\[3pt]
-		
-		$\epsilon_{\mathrm{var}}$      & $10^{-5}$  &
-		判断输入点分布或观测矩阵是否退化（如共线、共面）；低于此值可能无法得到有效解。\\[3pt]
-		
-		$K_{\mathrm{max}}$             & 15         &
-		SQP 算法最大迭代步数上限，用于防止在极端情况下陷入死循环或过度迭代。\\
-		\bottomrule
-	\end{tabular}
-\end{table}
 
 
 
@@ -345,10 +314,130 @@ RANSAC 中的置信度（confidence）指的是"所求得的模型包含真实�
 
 
 \section{信赖域优化}
-\label{sec:RANSAC-TRO-SQPnP:TRO}
-在非线性最小二乘问题中，Levenberg-Marquardt（LM）常见于姿态估计的优化。但在局部寻优时，LM 容易出现收敛不稳定的情况。信赖域优化（TRO, Trust Region Optimization）\cite{trf} 则通过在每一步迭代时仅在一个"信赖域"半径内近似目标函数，若实际改进率 $\rho$ 大则扩大信赖域，否则收缩，从而在步长搜索方面更具稳定性。
 
-对于刚体姿态而言，SQPnP 通常侧重旋转估计，平移只做后续线性求解，若两者耦合较强或初解不佳，则需对 $\mathbf{R}, \mathbf{t}$ 进行进一步非线性微调。TRO 能在当前解附近更稳健地搜索更优步长，相比 LM 不易陷入局部极值，数值上也更具鲁棒性。
+由于关键点噪声的干扰，加上PnP求解算法的一定局限。导致对于解算出的6D姿态会出现更大的偏差，有不少研究基于重投影误差最小化对其进行优化以获得更为精确的解\cite{10297555,guo2024joint}。信赖域优化算法（Trust Region Optimization，TRO）是一种基于信赖域思想的非线性优化方法。考虑到重投影误差优化也是一种非线性优化问题。因此TRO也可以用于优化6D姿态。TRO在每次迭代中，它通过构建当前点处目标函数的二次近似模型，并在一个限定的“信赖域”半径范围内求解该模型的极小值，从而获得试探步长。然后，通过计算目标函数实际值降低量与模型预测降低量的比值 $\rho_k$，判断该步长是否可信。如果 $\rho_k$ 值足够大（如达到预设阈值 $\eta$），则认为模型对实际函数的近似较好，接受该步长并更新当前解；否则，拒绝该步长（保持当前解不变）。无论步长是否被接受，算法都会根据 $\rho_k$ 的大小自适应地调整信赖域半径（如果步长效果理想则适当增大信赖域范围，以加快收敛；若步长效果不佳则缩小信赖域范围，以提高下一步迭代的可靠性）。如此迭代进行，直至满足收敛判据（例如梯度范数足够小或步长长度足够小），算法终止并得到最终优化结果。
+
+
+\begin{figure}[htbp]
+	\centering
+	\begin{tikzpicture}[
+		>=stealth,
+		node distance=2.2cm,   % 节点垂直/水平距离
+		every node/.style={font=\small},
+		startstop/.style={
+			ellipse,
+			draw,
+			align=center,
+			minimum width=2.5em,
+			minimum height=1.5em
+		},
+		process/.style={
+			rectangle,
+			draw,
+			align=center,
+			minimum width=6em,
+			minimum height=2em
+		},
+		decision/.style={
+			diamond,
+			aspect=2,
+			draw,
+			align=center,
+			inner sep=1pt,
+			text width=9em,
+			minimum height=3em
+		}
+		]
+		
+		% 开始
+		\node (start) [startstop] {开始};
+		
+		% 初始化
+		\node (init) [process, below of=start, yshift=-0.5cm] {
+			初始化参数 $x_0$ 及信赖域半径 $\Delta_0$\\
+			令 $\mathrm{nfev} = 0$
+		};
+		
+		% 构建子问题
+		\node (subprob) [process, below of=init, yshift=-0.5cm] {
+			构建二次模型\\
+			并求解信赖域子问题\\
+			得到试探步长 $\mathbf{p}_k$
+		};
+		
+		% 评估目标函数
+		\node (eval) [process, below of=subprob, yshift=-0.5cm] {
+			评估目标函数\\
+			$\mathrm{nfev} \leftarrow \mathrm{nfev} + 1$\\
+			计算实际下降与预测下降比值 $\rho_k$
+		};
+		
+		% 判断步长可接受?
+		\node (accept) [decision, below of=eval, yshift=-0.5cm] {
+			$\rho_k \ge \eta$
+		};
+		
+		% 接受步长
+		\node (updateX) [process, right of=accept, xshift=3.2cm, yshift=-1.5cm] {
+			接受步长:\\
+			$x_{k+1} = x_k + \mathbf{p}_k$
+		};
+		
+		% 拒绝步长 - 更改此处的xshift参数，从-3.2cm改为-4.5cm
+		\node (rejectStep) [process, left of=accept, xshift=-3.5cm, yshift=-1.5cm] {
+			拒绝步长:\\
+			$x_{k+1} = x_k$
+		};
+		
+		% 调整信赖域半径
+		\node (radius) [process, below of=accept, yshift=-0.5cm] {
+			根据 $\rho_k$\\
+			调整信赖域半径 $\Delta_{k+1}$\\
+		};
+		
+		% 终止条件
+		\node (stopcond) [decision, below of=radius, yshift=-1.5cm, text width=10em] {
+			$\mathrm{nfev} \ge \mathrm{nfev}_\mathrm{max}$\\
+			或 $\|\nabla f\|_\infty \le \texttt{gtol}$\\
+			或 $\|x_{k+1} - x_k\| \le \texttt{xtol}$
+		};
+		
+		% 结束
+		\node (stop) [startstop, below of=stopcond, yshift=-1.5cm] {
+			结束
+		};
+		
+		% 连线
+		\draw[->] (start) -- (init);
+		\draw[->] (init) -- (subprob);
+		\draw[->] (subprob) -- (eval);
+		\draw[->] (eval) -- (accept);
+		
+		\draw[->] (accept) -| node[anchor=south, near start]{是} (updateX);
+		\draw[->] (accept) -| node[anchor=south, near start]{否} (rejectStep);
+		
+		\draw[->] (updateX) |- (radius);
+		\draw[->] (rejectStep) |- (radius);
+		
+		\draw[->] (radius) -- (stopcond);
+		
+		% 如果满足终止条件则结束
+		\draw[->] (stopcond) -- node[right, midway]{是} (stop);
+		
+		% 修改后的路径，改为-7增加左侧距离
+		\draw[->] (stopcond) -- ++(-8,0) node[midway, above]{否} |- (subprob);
+		
+	\end{tikzpicture}
+	\caption{信赖域优化算法流程图}
+	\label{fig:TRO_flowchart}
+\end{figure}
+
+
+如图~\ref{fig:TRO_flowchart}所示，信赖域优化算法从初始化步骤开始：在每次迭代中首先构建当前点处目标函数的二次近似模型，并在给定的信赖域半径 $\Delta_k$ 约束下求解该近似子问题以得到候选步长 $\mathbf{p}_k$。然后，计算实际函数值下降量与预测下降量的比值 $\rho_k$ 来评估步长的有效性。如果 $\rho_k \ge \eta$（其中$\eta$为步长接受阈值），则接受该步长（更新 $x_{k+1} = x_k + \mathbf{p}_k$）；否则拒绝该步长（令 $x_{k+1} = x_k$ 不变）。接着，根据 $\rho_k$ 的大小动态调整信赖域半径$\Delta_{k+1}$：当步长效果理想（$\rho_k$ 较大）时增大信赖域；当步长效果不佳（$\rho_k$ 较低）时则缩小信赖域。然后检查终止条件：函数评估次数 $\mathrm{nfev}$ 是否超过最大限制 $\mathrm{nfev_{max}}$，梯度无穷范数 $\|\nabla f\|_\infty$ 是否小于梯度容差 $\texttt{gtol}$，或步长范数 $\|x_{k+1} - x_k\|$ 是否小于步长容差 $\texttt{xtol}$。如果满足任一终止条件则结束；若不满足，则返回到"构建二次模型并求解信赖域子问题"节点，开始下一轮迭代。通过不断修正步长并调整信赖域范围，最终可得到使目标函数达到最优或次优的参数估计值。
+
+
+相对于经典的 LM（Levenberg-Marquardt）算法，信赖域优化方法在收敛的鲁棒性方面具有一定优势。LM 方法实质上在每次迭代中引入阻尼因子调整步长，但其阻尼因子的选取对收敛速度和稳定性有较大影响，需要经验调节。相比之下，信赖域算法通过内部机制自适应地调整信赖域半径，无需人工干预即可控制每步迭代的步长大小，因此对初始值的敏感性更低，能够在病态问题中提供更稳定可靠的收敛表现。
+
 
 \section{RANSAC-TRO SQPnP算法}
 \label{sec:RANSAC-TRO-SQPnP:Algorithm}
@@ -379,90 +468,90 @@ RANSAC 中的置信度（confidence）指的是"所求得的模型包含真实�
 \end{itemize}
 
 将 RANSAC 的内点集合带入到 TRO 的非线性最小二乘迭代中，结合上述各项参数的综合调控，可在局部寻优阶段获得更稳健的步长搜索与数值收敛。若初始估计较好，往往只需较少迭代便可达到满意的旋转和平移精度；若初值不够好或存在噪声与外点，则通过 TRO 优化 RANSAC SQPnP，仍可获得鲁棒稳定的最终解。
-\begin{algorithm}[!htbp]
-	\caption{RANSAC-TRO SQPnP}
-	\label{alg:RANSAC_TRO_SQPnP}
-	\begin{spacing}{0.9}  % 将行间距缩小到 0.9
-		\footnotesize        % 如果需要进一步缩小，可以换成 \scriptsize
-		\begin{algorithmic}[1]
-			\Procedure{RANSAC-TRO SQPnP}{$\mathbf{P},\mathbf{p},\mathbf{K},n,\tau,k_{\max},\epsilon_f,\epsilon_x,\epsilon_g,n_{\max}$}
-			\Comment{\parbox[t]{.85\linewidth}{
-					\textbf{输入:} 
-					$\mathbf{P}$: 3D点集, 
-					$\mathbf{p}$: 2D点集, 
-					$\mathbf{K}$: 相机内参矩阵, 
-					$n$: 每次随机采样的点数, 
-					$\tau$: 误差阈值, 
-					$k_{\max}$: 最大迭代次数, 
-					$\epsilon_f$: 函数容差, 
-					$\epsilon_x$: 参数容差, 
-					$\epsilon_g$: 梯度容差, 
-					$n_{\max}$: 最大函数评估次数.\\[4pt]
-					\textbf{输出:} 
-					$\mathbf{r}^*$: 最优旋转向量, 
-					$\mathbf{t}^*$: 最优平移向量, 
-					$\mathcal{I}^*$: 最佳内点集合
-			}}
-			
-			\State 初始化 $e^* \gets \texttt{MAX\_DOUBLE},\;\mathcal{I}^* \gets \emptyset$
-			
-			\For{$k \gets 1$ to $k_{\max}$}
-			\State 随机采样 $\mathcal{I}_k \gets \texttt{RandomSample}(n, |\mathbf{P}|)$
-			\State 提取对应点集 $\mathbf{P}_k \gets \mathbf{P}[\mathcal{I}_k]$, $\mathbf{p}_k \gets \mathbf{p}[\mathcal{I}_k]$
-			\State 姿态估计 $\mathbf{r}_k, \mathbf{t}_k \gets \texttt{SQPnP}(\mathbf{P}_k, \mathbf{p}_k, \mathbf{K})$
-			\State 计算误差 $e_k \gets \texttt{ReprojectError}(\mathbf{P}[\mathcal{I}_k], \mathbf{p}[\mathcal{I}_k], \mathbf{K}, \mathbf{r}_k, \mathbf{t}_k)$
-			\If{$e_k < e^*$}
-			\State 更新最优值 $e^* \gets e_k,\;\mathcal{I}^* \gets \mathcal{I}_k$
-			\State 存储最优姿态 $\mathbf{r}^* \gets \mathbf{r}_k,\;\mathbf{t}^* \gets \mathbf{t}_k$
-			\EndIf
-			\EndFor
-			
-			\State 使用最佳内点集合 $\mathbf{P}^* \gets \mathbf{P}[\mathcal{I}^*],\;\mathbf{p}^* \gets \mathbf{p}[\mathcal{I}^*]$
-			\State 初始化优化参数 $\mathbf{x} \gets [\mathbf{q}^*, \mathbf{t}^*]$
-			\State 计算初始误差 $\mathbf{f} \gets \texttt{ReprojectError}(\mathbf{P}^*, \mathbf{p}^*, \mathbf{K}, \mathbf{x}[0], \mathbf{x}[1])$
-			\State 计算雅可比矩阵 $\mathbf{J} \gets \texttt{Jacobian}(\mathbf{P}^*, \mathbf{p}^*, \mathbf{K}, \mathbf{x}[0], \mathbf{x}[1])$
-			\State 初始化计数器 $n_f, n_J \gets 1, 1$, $\mathbf{g} \gets \mathbf{J}^\top \mathbf{f}$, $i \gets 0$, $s \gets \texttt{None}$
-			
-			\While{未满足终止条件}
-			\If{$\|\mathbf{g}\|_\infty < \epsilon_g$}
-			\State $s \gets 1$
-			\State \textbf{break}
-			\EndIf
-			\State $\mathbf{g}_h, \mathbf{J}_h, \mathbf{U}, \mathbf{s}, \mathbf{V}, \mathbf{u}_f \gets \texttt{ComputeAproximateProblem}(\mathbf{J}, \mathbf{f})$
-			\While{$\rho \leq 0$ \textbf{ and } $n_f < n_{\max}$}
-			\State $\boldsymbol{\delta}_h, \boldsymbol{\delta}, \mathbf{x}_{\text{new}}, \mathbf{f}_{\text{new}} \gets \texttt{ComputeStep}(\mathbf{g}_h, \mathbf{J}_h, \mathbf{U}, \mathbf{s}, \mathbf{V}, \mathbf{u}_f, \mathbf{x}, \Delta)$
-			\State $n_f \gets n_f + 1$
-			\If{\textbf{not} \texttt{IsFinite}($\mathbf{f}_{\text{new}}$)}
-			\State $\Delta \gets \Delta \cdot 0.5$
-			\State \textbf{continue}
-			\EndIf
-			\State $\rho, \Delta_{\text{new}}, r, \|\boldsymbol{\delta}\| \gets \texttt{ComputeRatio}(\mathbf{f}, \mathbf{f}_{\text{new}}, \boldsymbol{\delta}_h, \Delta)$
-			\If{满足终止条件}
-			\State \textbf{break}
-			\EndIf
-			\State \texttt{Update}($\Delta$, $r$)
-			\EndWhile
-			
-			\If{$\rho > 0$}
-			\State 更新参数 $\mathbf{x}, \mathbf{f} \gets \mathbf{x}_{\text{new}}, \mathbf{f}_{\text{new}}$
-			\State 更新旋转和平移 $\mathbf{r}, \mathbf{t} \gets \mathbf{x}[0],\;\mathbf{x}[1]$
-			\State 重新计算雅可比矩阵和梯度 
-			$\mathbf{J}, \mathbf{g} \gets \texttt{Jacobian}(\mathbf{P}^*, \mathbf{p}^*, \mathbf{K}, \mathbf{r}, \mathbf{t}),\; \mathbf{J}^\top \mathbf{f}$
-			\State $n_J \gets n_J + 1$
-			\EndIf
-			\State $i \gets i + 1$
-			\EndWhile
-			
-			\If{$s$ 为 \texttt{None}}
-			\State $s \gets 0$
-			\EndIf
-			
-			\State 更新最终姿态 $\mathbf{r}^*, \mathbf{t}^* \gets \mathbf{x}[0], \mathbf{x}[1]$
-			\State \textbf{return} $\mathbf{r}^*, \mathbf{t}^*, \mathcal{I}^*$
-			\EndProcedure
-		\end{algorithmic}
-	\end{spacing}
-\end{algorithm}
+%\begin{algorithm}[!htbp]
+%	\caption{RANSAC-TRO SQPnP}
+%	\label{alg:RANSAC_TRO_SQPnP}
+%	\begin{spacing}{0.9}  % 将行间距缩小到 0.9
+%		\footnotesize        % 如果需要进一步缩小，可以换成 \scriptsize
+%		\begin{algorithmic}[1]
+%			\Procedure{RANSAC-TRO SQPnP}{$\mathbf{P},\mathbf{p},\mathbf{K},n,\tau,k_{\max},\epsilon_f,\epsilon_x,\epsilon_g,n_{\max}$}
+%			\Comment{\parbox[t]{.85\linewidth}{
+%					\textbf{输入:} 
+%					$\mathbf{P}$: 3D点集, 
+%					$\mathbf{p}$: 2D点集, 
+%					$\mathbf{K}$: 相机内参矩阵, 
+%					$n$: 每次随机采样的点数, 
+%					$\tau$: 误差阈值, 
+%					$k_{\max}$: 最大迭代次数, 
+%					$\epsilon_f$: 函数容差, 
+%					$\epsilon_x$: 参数容差, 
+%					$\epsilon_g$: 梯度容差, 
+%					$n_{\max}$: 最大函数评估次数.\\[4pt]
+%					\textbf{输出:} 
+%					$\mathbf{r}^*$: 最优旋转向量, 
+%					$\mathbf{t}^*$: 最优平移向量, 
+%					$\mathcal{I}^*$: 最佳内点集合
+%			}}
+%			
+%			\State 初始化 $e^* \gets \texttt{MAX\_DOUBLE},\;\mathcal{I}^* \gets \emptyset$
+%			
+%			\For{$k \gets 1$ to $k_{\max}$}
+%			\State 随机采样 $\mathcal{I}_k \gets \texttt{RandomSample}(n, |\mathbf{P}|)$
+%			\State 提取对应点集 $\mathbf{P}_k \gets \mathbf{P}[\mathcal{I}_k]$, $\mathbf{p}_k \gets \mathbf{p}[\mathcal{I}_k]$
+%			\State 姿态估计 $\mathbf{r}_k, \mathbf{t}_k \gets \texttt{SQPnP}(\mathbf{P}_k, \mathbf{p}_k, \mathbf{K})$
+%			\State 计算误差 $e_k \gets \texttt{ReprojectError}(\mathbf{P}[\mathcal{I}_k], \mathbf{p}[\mathcal{I}_k], \mathbf{K}, \mathbf{r}_k, \mathbf{t}_k)$
+%			\If{$e_k < e^*$}
+%			\State 更新最优值 $e^* \gets e_k,\;\mathcal{I}^* \gets \mathcal{I}_k$
+%			\State 存储最优姿态 $\mathbf{r}^* \gets \mathbf{r}_k,\;\mathbf{t}^* \gets \mathbf{t}_k$
+%			\EndIf
+%			\EndFor
+%			
+%			\State 使用最佳内点集合 $\mathbf{P}^* \gets \mathbf{P}[\mathcal{I}^*],\;\mathbf{p}^* \gets \mathbf{p}[\mathcal{I}^*]$
+%			\State 初始化优化参数 $\mathbf{x} \gets [\mathbf{q}^*, \mathbf{t}^*]$
+%			\State 计算初始误差 $\mathbf{f} \gets \texttt{ReprojectError}(\mathbf{P}^*, \mathbf{p}^*, \mathbf{K}, \mathbf{x}[0], \mathbf{x}[1])$
+%			\State 计算雅可比矩阵 $\mathbf{J} \gets \texttt{Jacobian}(\mathbf{P}^*, \mathbf{p}^*, \mathbf{K}, \mathbf{x}[0], \mathbf{x}[1])$
+%			\State 初始化计数器 $n_f, n_J \gets 1, 1$, $\mathbf{g} \gets \mathbf{J}^\top \mathbf{f}$, $i \gets 0$, $s \gets \texttt{None}$
+%			
+%			\While{未满足终止条件}
+%			\If{$\|\mathbf{g}\|_\infty < \epsilon_g$}
+%			\State $s \gets 1$
+%			\State \textbf{break}
+%			\EndIf
+%			\State $\mathbf{g}_h, \mathbf{J}_h, \mathbf{U}, \mathbf{s}, \mathbf{V}, \mathbf{u}_f \gets \texttt{ComputeAproximateProblem}(\mathbf{J}, \mathbf{f})$
+%			\While{$\rho \leq 0$ \textbf{ and } $n_f < n_{\max}$}
+%			\State $\boldsymbol{\delta}_h, \boldsymbol{\delta}, \mathbf{x}_{\text{new}}, \mathbf{f}_{\text{new}} \gets \texttt{ComputeStep}(\mathbf{g}_h, \mathbf{J}_h, \mathbf{U}, \mathbf{s}, \mathbf{V}, \mathbf{u}_f, \mathbf{x}, \Delta)$
+%			\State $n_f \gets n_f + 1$
+%			\If{\textbf{not} \texttt{IsFinite}($\mathbf{f}_{\text{new}}$)}
+%			\State $\Delta \gets \Delta \cdot 0.5$
+%			\State \textbf{continue}
+%			\EndIf
+%			\State $\rho, \Delta_{\text{new}}, r, \|\boldsymbol{\delta}\| \gets \texttt{ComputeRatio}(\mathbf{f}, \mathbf{f}_{\text{new}}, \boldsymbol{\delta}_h, \Delta)$
+%			\If{满足终止条件}
+%			\State \textbf{break}
+%			\EndIf
+%			\State \texttt{Update}($\Delta$, $r$)
+%			\EndWhile
+%			
+%			\If{$\rho > 0$}
+%			\State 更新参数 $\mathbf{x}, \mathbf{f} \gets \mathbf{x}_{\text{new}}, \mathbf{f}_{\text{new}}$
+%			\State 更新旋转和平移 $\mathbf{r}, \mathbf{t} \gets \mathbf{x}[0],\;\mathbf{x}[1]$
+%			\State 重新计算雅可比矩阵和梯度 
+%			$\mathbf{J}, \mathbf{g} \gets \texttt{Jacobian}(\mathbf{P}^*, \mathbf{p}^*, \mathbf{K}, \mathbf{r}, \mathbf{t}),\; \mathbf{J}^\top \mathbf{f}$
+%			\State $n_J \gets n_J + 1$
+%			\EndIf
+%			\State $i \gets i + 1$
+%			\EndWhile
+%			
+%			\If{$s$ 为 \texttt{None}}
+%			\State $s \gets 0$
+%			\EndIf
+%			
+%			\State 更新最终姿态 $\mathbf{r}^*, \mathbf{t}^* \gets \mathbf{x}[0], \mathbf{x}[1]$
+%			\State \textbf{return} $\mathbf{r}^*, \mathbf{t}^*, \mathcal{I}^*$
+%			\EndProcedure
+%		\end{algorithmic}
+%	\end{spacing}
+%\end{algorithm}
 
 
 
@@ -471,8 +560,60 @@ RANSAC 中的置信度（confidence）指的是"所求得的模型包含真实�
 \section{实验分析}
 \label{sec:RANSAC-TRO-SQPnP:ExperimentCompare}
 \vspace{1ex}
+\subsection{SQPnP的参数设置}
+表 \ref{tab:sqpnp-params} 列出了 SQPnP 算法中与迭代收敛和数值稳定性相关的主要参数设置。大多数收敛阈值如 \(\epsilon_{\mathrm{sqp}}\)、\(\epsilon_{\mathrm{orth}}\)、\(\epsilon_{\mathrm{vec}}\)、\(\epsilon_{\mathrm{err}}\) 等，都是为了控制迭代更新、旋转正交性、多解筛选以及重投影误差等方面的精度，确保在满足一定精度的前提下及时停止计算，从而避免无意义的过度迭代。退化判断阈值 \(\epsilon_{\mathrm{var}}\) 用于识别输入数据是否有较大共线、共面或分布极为不平衡等情况，从而在必要时提前终止或进行特殊处理。最大迭代次数 \(K_{\mathrm{max}}\) 则在确保精度的同时，防止算法在极端场景下因数值问题而陷入死循环或过度迭代。通过合理设置这些参数，可以在保证求解精度的同时，提高算法的稳定性和效率。
+\begin{table}[htbp]
+	\centering
+	\caption{SQPnP的主要参数设置}
+	\label{tab:sqpnp-params}
+	\begin{tabular}{l c p{7.5cm}}
+		\toprule
+		\textbf{参数} & \textbf{数值} & \textbf{功能} \\
+		\midrule
+		
+		$\epsilon_{\mathrm{sqp}}$      & $10^{-10}$ & 
+		SQP 迭代更新量 $\|\delta\|^2$ 的收敛阈值，小于此值认为已充分收敛。\\[3pt]
+		
+		$\epsilon_{\mathrm{orth}}$     & $10^{-8}$  & 
+		判断当前旋转矩阵正交误差是否可忽略，例如 $\|R^\top R - I\|$ 是否足够小。\\[3pt]
+		
+		$\epsilon_{\mathrm{vec}}$      & $10^{-10}$ &
+		判断两个旋转向量是否几乎相同，以便在多解筛选或重复解检测时去重。\\[3pt]
+		
+		$\epsilon_{\mathrm{err}}$      & $10^{-6}$  &
+		判断两次重投影误差的平方和是否近似相等，避免无意义的细微迭代。\\[3pt]
+		
+		$\epsilon_{\mathrm{var}}$      & $10^{-5}$  &
+		判断输入点分布或观测矩阵是否退化（如共线、共面）；低于此值可能无法得到有效解。\\[3pt]
+		
+		$K_{\mathrm{max}}$             & 15         &
+		SQP 算法最大迭代步数上限，用于防止在极端情况下陷入死循环或过度迭代。\\
+		\bottomrule
+	\end{tabular}
+\end{table}
 
-在此小节，综合评估了本文提出的模型与几种常见的 PnP 方法对比。大多数研究者通常使用 EPnP \cite{EPnP} + RANSAC 来实现基础的鲁棒性，还有人结合 Levenberg-Marquardt (LM) 进行额外优化。在下表中一并展示了这些方法，与本文提出的 RANSAC-TRO SQPnP 进行对比。
+
+\subsection{算法参数的设置}
+
+如图~\ref{fig:TRO_flowchart}所示，信赖域优化算法的具体实现包含以下关键参数：在本章的研究内容下，初始参数向量 $x_0$ 是PnP解算产生的6D姿态参数（3维旋转向量和3维平移向量）。我们优化的参数是相机姿态参数，其中3维旋转向量表示相机的方向（使用Rodrigues旋转表示法），3维平移向量表示相机的空间位置坐标。初始信赖域半径 $\Delta_0$ 设置为初始参数向量的范数 $\|x_0\|$，这种动态设置使算法能够自适应地调整搜索范围。在每次迭代中，算法评估试探步长 $\mathbf{p}_k$ 的效果，通过比值 $\rho_k$ 判断（步长接受阈值 $\eta$ 在本实现中采用了0值，表示只要步长能带来任何程度的目标函数减少就接受，同时通过信赖域半径的动态调整确保算法稳定性）。算法的终止条件由三个主要参数控制：最大函数评估次数设为6000、梯度容差 $\texttt{gtol}$设为 $10^{-8}$，步长容差 $\texttt{xtol}$设为 $10^{-8}$。
+\begin{table}[htbp]
+	\centering
+	\caption{信赖域优化算法参数及初始值}
+	\label{tab:tr_parameters}
+	\begin{tabular}{llp{8cm}}
+		\hline
+		参数 & 初始值/默认值 & 说明 \\
+		\hline
+		$\Delta_0$ & $\|x_0\|$ & 初始信赖域半径\\
+		$\eta$ & 0 & 步长接受阈值，仅要求目标函数有正向减少 \\
+		$\text{ftol}$ & $10^{-8}$ & 函数值相对变化的容差 \\
+		$\text{xtol}$ & $10^{-8}$ & 参数变化的容差 \\
+		$\text{gtol}$ & $10^{-8}$ & 梯度无穷范数的容差 \\
+		$\text{nfev}_\text{max}$ & 6000 & 最大函数评估次数（代码中直接设置） \\
+		\hline
+	\end{tabular}
+\end{table}
+
 
 \subsection{PnP 方法在 SPEED+数据集上的对比}
 \begin{table}[!htbp]
@@ -566,4 +707,4 @@ SPEED数据集还提供了真实的Tango卫星照片，但没有姿态标注。�
 
 \section{本章小结}
 \label{sec:RANSAC-TRO-SQPnP:summary}
-本章围绕通过关键点检测与基于重投影误差优化的PnP算法相结合来求解非合作目标的6D姿态展开，首先在标准针孔模型和畸变模型的基础上推导了相机对3D关键点的投影关系；随后提出了结合正交约束的SQPnP算法，将旋转矩阵的求解视为带约束的非线性二次规划问题，通过序列二次规划方法迭代优化得到精确的旋转矩阵，并在此基础上线性求解平移向量；针对外点干扰，为了使估计对异常关键点更具鲁棒性，引入RANSAC随机采样与一致性检测以剔除外点；进而在获得精初值后，采用信赖域优化（TRO）对旋转和平移在局部区域内进一步非线性迭代精细求解，从而有效缓解旋转-平移之间的耦合影响；最后通过在SPEED与SPEED+等数据集上的实验，详细对比了RANSAC-TRO SQPnP与其他PnP算法及典型航天器姿态估计方法的精度与模型复杂度，结果表明RANSAC-TRO SQPnP在处理关键点噪声、剔除外点以及局部优化收敛性等方面均具有较高的鲁棒性和优异的精度表现。
+本章围绕通过关键点检测与基于重投影误差优化的PnP算法相结合来求解非合作目标的6D姿态展开，首先在标准针孔模型和畸变模型的基础上推导了相机对3D关键点的投影关系；然后提出了结合正交约束的SQPnP算法，将旋转矩阵的求解视为带约束的非线性二次规划问题，通过序列二次规划方法迭代优化得到精确的旋转矩阵，并在此基础上线性求解平移向量；针对外点干扰，为了使估计对异常关键点更具鲁棒性，引入RANSAC随机采样与一致性检测以剔除外点；进而在获得精初值后，采用信赖域优化（TRO）对旋转和平移在局部区域内进一步非线性迭代精细求解，从而有效缓解旋转-平移之间的耦合影响；最后通过在SPEED与SPEED+等数据集上的实验，详细对比了RANSAC-TRO SQPnP与其他PnP算法及典型航天器姿态估计方法的精度与模型复杂度，结果表明RANSAC-TRO SQPnP在处理关键点噪声、剔除外点以及局部优化收敛性等方面均具有较高的鲁棒性和优异的精度表现。
