@@ -1,11 +1,11 @@
-\chapter{基于RANSAC-TRO SQPnP的6D姿态解算方法}
+\chapter{基于重投影误差优化的6D姿态解算方法}
 \label{chap:RANSAC-TRO-SQPnP}
 
 \section{引言}
 \label{sec:RANSAC-TRO-SQPnP:intro}
-在上一章中，已针对单张图像的关键点检测进行了研究，并成功获取了非合作目标关键点在图像中的像素坐标。为了从这些像素坐标中精确计算出空间非合作目标的6D姿态，需要将这些2D像素坐标与非合作目标先验的标准6D姿态下的3D关键点结合，通过求解PnP（Perspective-n-Point）问题进而得出空间非合作目标的完整6D姿态。现有研究中，大多数工作采用P3P\cite{chen2019satellite,s22218541,Guo_2022}或EPnP\cite{li2022learning,huan2020pose,lotti2022investigating}等算法进行求解。
-然而，上一章所提出的关键点检测模型预测的关键点像素坐标不可避免地存在一定的噪声，特别是在目标遮挡、光照不足等极端条件下，这种噪声会显著增大。为了更有效地应对PnP求解过程中关键点检测网络预测出的较大噪声，本章采用了一种基于重投影误差优化的求解方案SQPnP\cite{terzakis2020consistently}。该方法能够在关键点存在较大噪声的情况下，仍然保持较高的姿态估计精度。
-进一步考虑到，在极端场景中，关键点检测模型可能产生一定比例的异常点，这些异常点会对估计结果的精度造成显著影响。为了解决这一问题，本章引入了随机采样一致性（Random Sample Consensus，RANSAC）算法，通过随机选取关键点子集输入SQPnP，并选择重投影误差最小的子集作为内点（inliers），从而有效排除异常点的干扰，提高姿态估计的鲁棒性。
+在上一章中，已针对单张图像的关键点检测进行了研究，并利用基于注意力机制的关键点检测网络成功获取了非合作目标关键点在图像中的像素坐标。为了从这些像素坐标中精确计算出空间非合作目标的6D姿态，需要将这些2D像素坐标与非合作目标先验的标准6D姿态下的3D关键点结合，通过求解PnP（Perspective-n-Point）问题进而得出空间非合作目标的完整6D姿态。现有研究中，大多数工作采用P3P\cite{chen2019satellite,s22218541,Guo_2022}或EPnP\cite{li2022learning,huan2020pose,lotti2022investigating}等算法进行求解。
+然而，上一章所提出的关键点检测模型预测的关键点像素坐标不可避免地存在一定的噪声，特别是在目标遮挡、光照不足等极端条件下，这种噪声会显著增大。为了更有效地应对PnP求解过程中关键点检测网络预测出的较大噪声，本章采用了 George Terzakis 和 Manolis Lourakis提出的一种基于重投影误差优化的求解方案SQPnP\cite{terzakis2020consistently}。该方法能够在关键点存在较大噪声的情况下，仍然保持较高的姿态估计精度。
+进一步考虑到，在极端场景中，关键点检测模型可能产生一定比例的异常点，这些异常点会对估计结果的精度造成显著影响。为了解决这一问题，本章引入了RANSAC算法，通过随机选取关键点子集输入SQPnP，并选择重投影误差最小的子集作为内点（inliers），从而有效排除异常点的干扰，提高姿态估计的鲁棒性。
 值得注意的是，SQPnP算法以优化旋转矩阵$R$为核心，而平移向量$t$的估计则是基于$R$求解得出，这导致$t$与$R$之间存在一定程度的耦合，可能会对最终优化收敛产生不利影响。针对这一问题，本章在RANSAC-SQPnP求解的结果基础上，进一步引入信赖域优化（Trust Region Optimization，TRO）技术，通过对旋转和平移参数进行解耦和精细优化，最终使得结果收敛到更高精度。
 基于上述分析，本章提出并详细研究了一种结合RANSAC、SQPnP和信赖域优化的PnP求解算法，称为RANSAC-TRO-SQPnP。该算法通过三个关键组件的有机结合，有效应对了实际应用中面临的多重挑战。具体而言，RANSAC组件负责识别并剔除异常点，提高算法的鲁棒性；SQPnP组件提供对关键点噪声的适应能力，保证基础姿态估计的准确性；而TRO组件则对初步估计的6D姿态进行局部精细优化，解决旋转与平移参数的耦合问题。实验结果表明，所提出的RANSAC-TRO SQPnP方法能够显著提高非合作目标6D姿态估计的精度和鲁棒性，特别是在关键点检测存在较大噪声和异常点的复杂场景中表现出色。
 
@@ -16,7 +16,7 @@
 
 在空间非合作目标6D姿态测量中，经常使用的算法有EPnP, P3P，但是由于关键点预测模型预测出的关键点存在一定的噪声，像EPnP，P3P这类基于传统几何与代数的解算方法的鲁棒性不够强，而SQPnP算法\cite{terzakis2020consistently}由于重投影误差优化问题的思路进行入手，加上其巧妙的优化问题建模方式，优化求解手段，使得其不像LM, GN等方法还需要传统的几何与代数解法的结果作为初值。可以在一开始就进行独立求解，并逐步收敛至更为精确的解。
 \subsection{相机模型}
-在构建PnP问题的方程中，相机投影是必不可少的一个环节。为了对相机投影进行建模，需要借助经典的针孔相机模型（pinhole camera model）和相机内参（焦距，主点坐标，畸变参数），同时考虑了实际成像中常见的镜头畸变。SPEED/SPEED+数据集已包含相机的内参，Nauka MLM与Starlink的渲染也沿用了同样的相机内参。
+在构建PnP问题的方程中，相机投影是必不可少的一个环节。为了对相机投影进行建模，需要借助经典的针孔相机模型和相机内参（焦距，主点坐标，畸变参数），同时考虑了实际成像中常见的镜头畸变。SPEED/SPEED+数据集已包含相机的内参，Nauka MLM与Starlink的渲染也沿用了同样的相机内参。
 
 
 
@@ -105,7 +105,7 @@
 \begin{figure}[htbp]
 	\centering
 	\includegraphics[width=0.8\textwidth]{Img/distortion.png}
-	\caption{不同畸变模型下的棋盘格示意图：左图为无畸变情形，中图显示典型的径向畸变，右图为切向畸变。}
+	\caption{棋盘格畸变示意图：左图为无畸变情形，中图显示典型的径向畸变，右图为切向畸变。}
 	\label{fig:distortion_patterns}
 \end{figure}
 
@@ -264,82 +264,146 @@ $h(x) = \mathbf{0}_6$ 则表示一组等式约束，使得当 $h(x)=\mathbf{0}$ 
 
 
 \section{RANSAC算法}
-RANSAC（随机抽样一致性，\textit{Random Sample Consensus}）算法由 Fischler 和 Bolles 于 1981 年提出，是一种在含有大量异常值数据的环境下进行模型参数估计的鲁棒算法。该算法通过反复随机抽取数据子集并拟合模型，从带有噪声和离群点（外点）的观测数据中筛选出与模型一致的内点，从而实现对异常值的剔除。RANSAC 在计算机视觉领域得到了广泛应用，例如用于估计两幅图像间的单应矩阵、基础矩阵和平面模型等。在本课题中，我们将其应用于相机姿态（位姿）求解，以提高位姿估计对匹配点集合中可能存在的错误匹配（离群点）的鲁棒性。
+\label{sec:ransac_pnp}
 
-RANSAC 算法的基本思路是反复进行“随机采样”和“模型评估”两个阶段，直至找到满意的模型估计。其具体流程包括：
-\begin{enumerate}
-	\item 从数据集中随机选取最少数量的样本点来拟合模型。在相机位姿求解的 PnP 问题中，由于求解位姿至少需要 4 对点对应（即 \texttt{MIN\_POINTS\_COUNT} = 4），因此每次随机采样从所有匹配点中选择 4 对对应点。
-	\item 使用选取的样本点计算模型参数。例如，对于 PnP 问题，利用这 4 对 3D-2D 对应点计算相机姿态（旋转向量 $\mathbf{r}$ 和平移向量 $\mathbf{t}$）。
-	\item 将模型应用于全部数据，计算每个样本点的误差并判断其是否符合该模型。对于 PnP 而言，可将 3D 点通过估计的姿态投影到图像平面，与实际 2D 观测点比较来计算重投影误差。若误差小于预设阈值，则该点视为内点；否则视为外点。
-	\item 统计内点数量，并与当前最佳模型的内点数量进行比较。若当前模型的内点数多于先前最佳模型，则将当前模型视为新的最佳模型，并记录对应的内点集合。
-	\item 如果当前模型的内点数达到预先设定的阈值（例如超过一定比例或绝对数量），则认为找到了足够好的模型，可提前终止迭代。否则，重复以上随机采样与评估过程。
-\end{enumerate}
-上述过程将执行预定的最大迭代次数或在满足终止条件时结束。算法结束时，会选择内点最多的模型作为最终结果，并可使用该模型对应的所有内点重新估计模型参数以进一步提高精度（例如对相机姿态再执行一次整体优化）。图\ref{fig:ransac_flow}展示了 RANSAC 算法的流程示意图。
+RANSAC算法由 Fischler 和 Bolles 于 1981 年提出，用于在含有大量异常值（离群点）的环境下对模型参数进行鲁棒估计。它在数据中反复随机抽取最小数量的样本来拟合模型，并以预先设定的误差阈值判断内点和外点。图~\ref{fig:ransac_flowchart} 展示了本章所采用的 RANSAC 流程：在获取输入数据后，首先对关键变量和计数器进行初始化，包括将迭代次数 \(k\) 置零、内点集合 \(\mathcal{I}_{\text{best}}\) 置空、内点比例 \(\omega_{\text{best}}\) 初始化为 0 以及设置最大迭代次数 \(k_{\max}\) 等。然后在每次迭代中随机选取最小数量的 3D--2D 匹配点（对于 PnP 通常需要 4 或 5 对），求解相机姿态 \(\mathrm{rvec}, \mathrm{tvec}\)。之后计算所有匹配点的重投影误差，并根据阈值 \(\tau\) 判断其是否为内点，从而获得当前迭代的内点集合 \(\mathcal{I}_{i,\text{new}}\)。更新迭代计数后，将该模型与已有最佳模型进行比较：若当前内点数更多（或者内点数相同但总误差更小），则更新最佳模型的内点集合、内点比例与误差等变量，并基于更新后的内点比例 \(\omega_{\text{best}}\) 重新计算满足期望置信度 \(\alpha\) 的最少迭代次数 \(N\)。每次迭代都要检查终止条件，包括迭代次数是否达到或超过 \(k_{\max}\)，以及是否超过由内点比例计算得到的迭代次数 \(N\)。若任何条件满足，算法便可停止并输出当前最佳模型及其内点集合，从而减少不必要的迭代。
 
-OpenCV 提供了 \texttt{cv::solvePnPRansac} 函数来实现基于 RANSAC 的 PnP 求解。该函数内部结合了上述 RANSAC 随机抽样一致性策略，以提高位姿估计对误匹配点的鲁棒性。函数接口中与 RANSAC 有关的关键参数如下表所示：
 
-\begin{table}[htbp]\centering
-	\caption{RANSAC 算法关键参数及说明}
-	\label{tab:ransac_params}
-	\begin{tabular}{l p{9cm} l}
-		\hline
-		\textbf{参数名称} & \textbf{含义} & \textbf{默认值}\\
-		\hline
-		\texttt{iterationsCount} & RANSAC 算法的最大迭代次数。值越大，算法尝试随机模型的次数越多，找到正确模型的概率越高，但计算开销也随之增加。 & 100 \\
-		\texttt{reprojectionError} & 判定内点的重投影误差阈值（以像素为单位）。当一个观测点在估计模型下的重投影误差小于该阈值时，被认定为内点。阈值越小，内点判定越严格。 & 8.0 \\
-		\texttt{minInliersCount} & 提前终止迭代所需的最少内点数。当找到一个模型的内点数达到此值时，算法认为模型足够可靠，可以提前结束迭代。若设为 0 或未指定，则默认取全部样本点数量，表示不启用提前终止条件。 & 无（默认等于所有点数） \\
-		\texttt{useExtrinsicGuess} & 是否使用提供的初始外部参数估计值。若为 \texttt{true}，则以传入的初始 $\mathbf{r}, \mathbf{t}$ 作为求解起点。该选项对于使用迭代优化法（如 \texttt{SOLVEPNP\_ITERATIVE}）的方法尤为重要。 & \texttt{false} \\
-		\texttt{flags} & PnP 求解所使用的算法类型标志。例如 \texttt{SOLVEPNP\_ITERATIVE}（基于 Levenberg-Marquardt 的迭代法）、\texttt{SOLVEPNP\_P3P}（解三点透视问题）、\texttt{SOLVEPNP\_EPNP}（高效 PnP）等。RANSAC 在每次迭代中将调用该指定算法来求解候选位姿。 & \texttt{SOLVEPNP\_ITERATIVE} \\
-		\hline
-	\end{tabular}
-\end{table}
-
-需要注意的是，在较新版的 OpenCV（如 3.2 及之后版本）中，\texttt{solvePnPRansac} 接口引入了 \texttt{confidence} 参数来取代 \texttt{minInliersCount}，用于指定算法输出正确结果的置信概率（默认 0.99），并据此自动估算所需的迭代次数&#8203;:contentReference[oaicite:0]{index=0}&#8203;:contentReference[oaicite:1]{index=1}。无论采用何种参数配置，RANSAC 算法都能在一定概率下找到满足精度要求的模型，并有效剔除离群点对结果的干扰。
-
-\begin{figure}[htbp]\centering
-	\begin{tikzpicture}[node distance=14mm,>=Stealth, semithick]
-		% Define styles for nodes
-		\tikzstyle{startstop}=[ellipse, draw, align=center, minimum width=25mm, minimum height=8mm]
-		\tikzstyle{process}=[rectangle, draw, align=center, rounded corners, minimum height=10mm, minimum width=35mm]
-		\tikzstyle{decision}=[diamond, aspect=2, draw, align=center, inner sep=1pt, minimum width=30mm, minimum height=12mm]
-		% Nodes
+\begin{figure}[htbp]
+	\centering
+	\begin{tikzpicture}[node distance=18mm, >=Stealth, semithick, scale=0.8, transform shape]
+		% -- 定义样式 --
+		\tikzstyle{startstop} = [ellipse, draw, align=center, minimum width=25mm, minimum height=10mm]
+		\tikzstyle{process} = [rectangle, draw, align=center, minimum height=12mm, minimum width=45mm]
+		\tikzstyle{decision} = [diamond, aspect=2, draw, align=center, inner sep=1pt, minimum width=40mm, minimum height=14mm]
+		\tikzstyle{data} = [trapezium, trapezium left angle=70, trapezium right angle=110, minimum width=60mm, minimum height=12mm, draw, align=center]
+		
+		% 开始
 		\node[startstop] (start) {开始};
-		\node[process, below of=start] (init) {参数初始化\\(迭代次数=0)};
-		\node[process, below of=init] (sample) {随机选择最小样本\\(4 对对应点)};
-		\node[process, below of=sample] (model) {计算候选位姿\\(解 PnP)};
-		\node[process, below of=model] (evaluate) {计算误差并统计\\内点数量};
-		\node[decision, below of=evaluate, yshift=-3mm, text width=30mm] (better) {内点数是否\\超过当前最佳?};
-		\node[process, right of=better, xshift=25mm] (update) {更新最佳模型\\及内点集};
-		\node[decision, below of=better, yshift=-15mm, text width=34mm] (stop) {是否满足终止条件?};
-		\node[startstop, below of=stop, yshift=-3mm] (end) {结束\\输出结果};
-		% Coordinate for loop arrow
-		\coordinate (loop) at ($(sample.north)+(-20mm,0)$);
-		% Connections and arrows
-		\draw[->] (start) -- (init);
+		
+		% 输入框
+		\node[data, below of=start, yshift=-5mm] (input) {
+			输入
+			$\mathcal{I}_{3D}$, $\mathcal{I}_{2D}$
+			$\alpha$, $\tau$, $k_{\max}$, $\beta$, $s$
+		};
+		
+		% 初始化：仅列出相关数学变量名称
+		\node[process, below of=input, yshift=-2mm] (init) {
+			初始化
+			$k=0,\; \mathcal{I}_{\text{best}}=\emptyset,\; \omega_{\text{best}}=0,\; E_{\text{best}}=\infty,\; N=k_{\max}$
+		};
+		
+		% 随机选取最小样本，并求解 PnP 得到 $tvec,\, rvec$
+		\node[process, below of=init, yshift=-3mm] (sample) {
+			随机选取最小样本\\
+			求解 PnP得到$\mathrm{rvec}$,$\mathrm{tvec}$
+		};
+		
+		% 根据阈值 $\tau$ 计算重投影误差，估计当前内点集
+		\node[process, below of=sample, yshift=-3mm] (model) {
+			计算重投影误差\\
+			按照阈值$\tau$估计内点集 $\mathcal{I}_{i,\text{new}}$
+		};
+		
+		% 计算误差及统计内点比例，并更新迭代次数计数
+		\node[process, below of=model, yshift=-3mm] (evaluate) {
+			计算误差并统计 $\omega_i$\\
+			$k \leftarrow k + 1$
+		};
+		
+		% 判定是否更新最佳模型
+		\node[decision, below of=evaluate, yshift=-14mm, text width=32mm] (better) {
+			\scriptsize
+			$|I_{i,\text{n}}| > |I_{\text{b}}|$ 
+			\scriptsize 或 
+			\scriptsize ($|I_{i,\text{n}}| = |I_{\text{b}}|$ 
+			\scriptsize 且 $E_{i,\text{n}} < E_{\text{b}}$)
+		};
+		
+		\node[process, right of=better, xshift=55mm, text width=40mm] (update) {
+			\scriptsize
+			$\mathcal{I}_{\text{best}} = \mathcal{I}_{i,\text{new}}$\\
+			\scriptsize
+			$\omega_{\text{best}} = \frac{|\mathcal{I}_{\text{best}}|}{N_{\text{kpt}}}$\\
+			\scriptsize
+			$N = \frac{\ln(1-\alpha)}{\ln(1 - \omega_{\text{best}}^s)}$
+		};
+		
+		% 终止条件判定
+		\node[decision, below of=better, yshift=-27mm, text width=30mm] (stop) {
+			\scriptsize
+			$k \ge k_{\max}$ 或 
+			\scriptsize
+			$k \ge N$ 或 
+			\scriptsize
+			$\omega_{\text{best}} \ge \beta$
+		};
+		
+		% 输出框
+		\node[data, below of=stop, yshift=-20mm] (output) {
+			输出\\
+			$\mathrm{rvec}, \mathrm{tvec}$\\
+			最佳内点集 $\mathcal{I}_{\text{best}}$
+		};
+		
+		% 结束
+		\node[startstop, below of=output, yshift=-8mm] (end) {
+			结束
+		};
+		
+		% 连线
+		\draw[->] (start) -- (input);
+		\draw[->] (input) -- (init);
 		\draw[->] (init) -- (sample);
 		\draw[->] (sample) -- (model);
 		\draw[->] (model) -- (evaluate);
 		\draw[->] (evaluate) -- (better);
-		\draw[->] (better) -- node[above] {是} (update);
+		\draw[->] (better) -- node[above, xshift=3mm] {是} (update);
 		\draw[->] (better) -- node[left] {否} (stop);
 		\draw[->] (update) |- (stop);
-		\draw[->] (stop.west) node[above, xshift=-2mm]{否} -| (loop) -- (sample.north);
-		\draw[->] (stop) -- node[right] {是} (end);
+		\draw[->] (stop) -- node[right] {是} (output);
+		\draw[->] (output) -- (end);
+		\coordinate (backLoop) at ($(sample.west)+(-6cm,0)$);
+		\draw[->] (stop.west) node[above, xshift=-2.5mm]{否} -| (backLoop) -- (sample.west);
 	\end{tikzpicture}
 	\caption{RANSAC 算法流程图}
-	\label{fig:ransac_flow}
+	\label{fig:ransac_flowchart}
 \end{figure}
 
+\begin{table}[h!]
+	\centering
+	\caption{RANSAC 中主要参数与变量说明}
+	\label{tab:ransac_params}
+	\begin{tabular}{c|c}
+		\toprule
+		\textbf{符号} & \textbf{意义}\\
+		\midrule
+		$\mathcal{I}_{3D}, \mathcal{I}_{2D}$ & 匹配后的 3D--2D 点集合 \\
+		$\alpha$ & 期望的置信度\\
+		$\tau$ & 重投影误差阈值 \\
+		$k_{\max}$ & 最大迭代次数 \\
+		$s$ & 最小样本大小\\
+		$k$ & 当前迭代次数 \\
+		$N$ & 根据 $\alpha$ 和内点比例动态计算得到的最少迭代次数 \\
+		$\omega_{\text{best}}$ & 当前最佳模型的内点比例 \\
+		$E_{\text{best}}$ & 当前最佳模型的总误差或平均误差 \\
+		\bottomrule
+	\end{tabular}
+\end{table}
 
 
 
-\section{信赖域优化}
 
-由于关键点噪声的干扰，加上PnP求解算法的一定局限。导致对于解算出的6D姿态会出现更大的偏差，有不少研究基于重投影误差最小化对其进行优化以获得更为精确的解\cite{10297555,guo2024joint}。信赖域优化算法（Trust Region Optimization，TRO）是一种基于信赖域思想的非线性优化方法。在诸多领域得到了广泛应用。例如在深度神经网络训练中，基于信赖域的拟牛顿二阶优化方法能有效引入曲率信息，加速大规模模型的训练并提高性能​
-\cite{a16100490},在控制系统领域，TRO同样发挥着重要作用。例如对于高维非线性控制优化问题（如交通信号控制），引入信赖域的贝叶斯优化算法能够显著提高求解效率，并在探索与利用之间取得平衡，以得到高质量的控制方案​
-\cite{gong2024optimizing}
-。在控制系统领域，TRO同样发挥着重要作用。例如对于高维非线性控制优化问题（如交通信号控制），引入信赖域的贝叶斯优化算法能够显著提高求解效率，并在探索与利用之间取得平衡，以得到高质量的控制方案​
-\cite{2024_Gong}。考虑到重投影误差优化也是一种非线性优化问题。因此TRO也可以用于优化6D姿态。TRO在每次迭代中，它通过构建当前点处目标函数的二次近似模型，并在一个限定的“信赖域”半径范围内求解该模型的极小值，从而获得试探步长。然后，通过计算目标函数实际值降低量与模型预测降低量的比值 $\rho_k$，判断该步长是否可信。如果 $\rho_k$ 值足够大（如达到预设阈值 $\eta$），则认为模型对实际函数的近似较好，接受该步长并更新当前解；否则，拒绝该步长（保持当前解不变）。无论步长是否被接受，算法都会根据 $\rho_k$ 的大小自适应地调整信赖域半径（如果步长效果理想则适当增大信赖域范围，以加快收敛；若步长效果不佳则缩小信赖域范围，以提高下一步迭代的可靠性）。如此迭代进行，直至满足收敛判据（例如梯度范数足够小或步长长度足够小），算法终止并得到最终优化结果。
+
+
+
+
+
+\section{信赖域优化算法}
+
+由于关键点噪声的干扰，加上PnP求解算法的一定局限。导致对于解算出的6D姿态会出现更大的偏差，有不少研究基于重投影误差最小化对其进行优化以获得更为精确的解\cite{10297555,guo2024joint}。信赖域优化算法（Trust Region Optimization，TRO）是一种基于信赖域思想的非线性优化方法。在诸多领域得到了广泛应用。例如在深度神经网络训练中，基于信赖域的拟牛顿二阶优化方法能有效引入曲率信息，加速大规模模型的训练并提高性能​\cite{a16100490},在控制系统领域，TRO同样发挥着重要作用。例如对于高维非线性控制优化问题（如交通信号控制），引入信赖域的贝叶斯优化算法能够显著提高求解效率，并在探索与利用之间取得平衡，以得到高质量的控制方案​\cite{gong2024optimizing}
+。在控制系统领域，TRO同样发挥着重要作用。例如对于高维非线性控制优化问题（如交通信号控制），引入信赖域的贝叶斯优化算法能够显著提高求解效率，并在探索与利用之间取得平衡，以得到高质量的控制方案​\cite{2024_Gong}。考虑到重投影误差优化也是一种非线性优化问题。因此TRO也可以用于优化6D姿态。TRO在每次迭代中，它通过构建当前点处目标函数的二次近似模型，并在一个限定的“信赖域”半径范围内求解该模型的极小值，从而获得试探步长。然后，通过计算目标函数实际值降低量与模型预测降低量的比值 $\rho_k$，判断该步长是否可信。如果 $\rho_k$ 值足够大（如达到预设阈值 $\eta$），则认为模型对实际函数的近似较好，接受该步长并更新当前解；否则，拒绝该步长（保持当前解不变）。无论步长是否被接受，算法都会根据 $\rho_k$ 的大小自适应地调整信赖域半径（如果步长效果理想则适当增大信赖域范围，以加快收敛；若步长效果不佳则缩小信赖域范围，以提高下一步迭代的可靠性）。如此迭代进行，直至满足收敛判据（例如梯度范数足够小或步长长度足够小），算法终止并得到最终优化结果。
 
 
 \begin{figure}[htbp]
@@ -592,7 +656,7 @@ OpenCV 提供了 \texttt{cv::solvePnPRansac} 函数来实现基于 RANSAC 的 Pn
 	\label{tab:sqpnp-params}
 	\begin{tabular}{l c p{7.5cm}}
 		\toprule
-		参数 & 数值} & 解释 \\
+		参数 & 数值 & 解释 \\
 		\midrule
 		
 		$\epsilon_{\mathrm{sqp}}$      & $10^{-10}$ & 
@@ -619,6 +683,28 @@ OpenCV 提供了 \texttt{cv::solvePnPRansac} 函数来实现基于 RANSAC 的 Pn
 
 \subsection{算法参数的设置}
 
+
+
+% 示例性内容开始
+如图~\ref{fig:ransac_flowchart}所示，RANSAC算法在输入阶段会根据置信度 $\alpha$ 和内点阈值 $\tau$ 对采样结果进行判别。为兼顾算法的精度和效率，需合理设置该算法的参数，例如置信度 $\alpha$ 直接影响抽样成功的概率，而 $\tau$ 决定了判定内点与否的误差门槛。此外，还需设定最大迭代次数 $k_{\max}$，以避免在极端情况下过多的迭代。具体设置如表~\ref{tab:ransac_params_setting} 所示。
+
+
+\begin{table}[h!]
+	\centering
+	\caption{RANSAC的参数设置}
+	\label{tab:ransac_params_setting}
+	\begin{tabular}{ccc}
+		\toprule
+		\textbf{参数} & \textbf{数值} & \textbf{含义} \\
+		\midrule
+		$\alpha$   & 0.99   & 置信度 \\
+		$\tau$     & 8      & 内点阈值 \\
+		$k_{\max}$ & 10000  & 最大迭代次数 \\
+		\bottomrule
+	\end{tabular}
+\end{table}
+
+
 如图~\ref{fig:TRO_flowchart}所示，信赖域优化算法的具体实现包含以下关键参数：在本章的研究内容下，初始参数向量 $x_0$ 是PnP解算产生的6D姿态参数（3维旋转向量和3维平移向量）。我们优化的参数是相机姿态参数，其中3维旋转向量表示相机的方向（使用Rodrigues旋转表示法），3维平移向量表示相机的空间位置坐标。初始信赖域半径 $\Delta_0$ 设置为初始参数向量的范数 $\|x_0\|$，这种动态设置使算法能够自适应地调整搜索范围。在每次迭代中，算法评估试探步长 $\mathbf{p}_k$ 的效果，通过比值 $\rho_k$ 判断（步长接受阈值 $\eta$ 在本实现中采用了0值，表示只要步长能带来任何程度的目标函数减少就接受，同时通过信赖域半径的动态调整确保算法稳定性）。算法的终止条件由三个主要参数控制：最大函数评估次数设为6000、梯度容差 $\texttt{gtol}$设为 $10^{-8}$，步长容差 $\texttt{xtol}$设为 $10^{-8}$。
 \begin{table}[htbp]
 	\centering
@@ -626,14 +712,14 @@ OpenCV 提供了 \texttt{cv::solvePnPRansac} 函数来实现基于 RANSAC 的 Pn
 	\label{tab:tr_parameters}
 	\begin{tabular}{llp{8cm}}
 		\hline
-		参数 & 初始值/默认值 & 说明 \\
+		参数 & 数值 & 说明 \\
 		\hline
 		$\Delta_0$ & $\|x_0\|$ & 初始信赖域半径\\
-		$\eta$ & 0 & 步长接受阈值，仅要求目标函数有正向减少 \\
+		$\eta$ & 0 & 步长接受阈值 \\
 		$\text{ftol}$ & $10^{-8}$ & 函数值相对变化的容差 \\
 		$\text{xtol}$ & $10^{-8}$ & 参数变化的容差 \\
 		$\text{gtol}$ & $10^{-8}$ & 梯度无穷范数的容差 \\
-		$\text{nfev}_\text{max}$ & 6000 & 最大函数评估次数（代码中直接设置） \\
+		$\text{nfev}_\text{max}$ & 6000 & 最大函数评估次数 \\
 		\hline
 	\end{tabular}
 \end{table}
@@ -677,12 +763,12 @@ OpenCV 提供了 \texttt{cv::solvePnPRansac} 函数来实现基于 RANSAC 的 Pn
 		\toprule
 		方法 & $err_{\text{T}}$ & $err_{\text{ort}}^{\circ}$ & 参数量(M) \\
 		\midrule
-		\citet{gerard2019segmentation} & 0.0730 & 0.9100 & $\sim$59.1 \\
-		\citet{lotti2022investigating} & \textbf{0.0340} & \textbf{0.5200} & 15.4 \\
-		\citet{wang2022revisiting} & 0.0391 & 0.6638 & $\sim$47.8 \\
-		\citet{park2019towards} & 0.2090 & 2.6200 & 11.17 \\
-		\citet{piazza2021deep} & 0.1036 & 2.2400 & $\sim$36.1 \\
-		\citet{huan2020pose} & 0.1823 & 2.8723 & $\sim$63.6 \\
+		Hu et al.\citep{gerard2019segmentation} & 0.0730 & 0.9100 & $\sim$59.1 \\
+		Lotti et al.\citep{lotti2022investigating} & \textbf{0.0340} & \textbf{0.5200} & 15.4 \\
+		Wang et al.\citep{wang2022revisiting} & 0.0391 & 0.6638 & $\sim$47.8 \\
+		Park et al.\citep{park2019towards} & 0.2090 & 2.6200 & 11.17 \\
+		Piazza et al.\citep{piazza2021deep} & 0.1036 & 2.2400 & $\sim$36.1 \\
+		Huan et al.\citep{huan2020pose} & 0.1823 & 2.8723 & $\sim$63.6 \\
 		Ours & 0.1043 & 1.4076 & \textbf{4.3} \\
 		\bottomrule
 	\end{tabular}
