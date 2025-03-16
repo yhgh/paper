@@ -4,7 +4,9 @@
 \section{引言}
 \label{sec:RANSAC-TRO-SQPnP:intro}
 在上一章中，已针对单张图像的关键点检测进行了研究，并利用基于注意力机制的关键点检测网络成功获取了非合作目标关键点在图像中的像素坐标。为了从这些像素坐标中精确计算出空间非合作目标的6D姿态，需要将这些2D像素坐标与非合作目标先验的标准6D姿态下的3D关键点结合，通过求解PnP问题进而得出空间非合作目标的完整6D姿态。现有研究中，大多数工作采用P3P\cite{chen2019satellite,s22218541,Guo_2022}或EPnP\cite{li2022learning,huan2020pose,lotti2022investigating}等算法进行求解。
-然而，上一章所提出的关键点检测模型预测的关键点像素坐标不可避免地存在一定的噪声，特别是在目标遮挡、光照不足等极端条件下，这种噪声会显著增大。为了更有效地应对PnP求解过程中关键点检测网络预测出的较大噪声，本章采用了 George Terzakis 和 Manolis Lourakis提出的一种基于重投影误差优化的求解方案SQPnP\cite{terzakis2020consistently}。该方法能够在关键点存在较大噪声的情况下，仍然保持较高的姿态估计精度。
+然而，上一章所提出的关键点检测模型预测的关键点像素坐标不可避免地存在一定的噪声，特别是在目标遮挡、光照不足等极端条件下，这种噪声会显著增大。
+
+为了更有效地应对PnP求解过程中关键点检测网络预测出的较大噪声，本章采用了 George Terzakis 和 Manolis Lourakis提出的一种基于重投影误差优化的求解方案SQPnP\cite{terzakis2020consistently}。该方法能够在关键点存在较大噪声的情况下，仍然保持较高的姿态估计精度。
 进一步考虑到，在极端场景中，关键点检测模型可能产生一定比例的异常点，这些异常点会对估计结果的精度造成显著影响。为了解决这一问题，本章引入了RANSAC算法，通过随机选取关键点子集输入SQPnP，并选择重投影误差最小的子集作为内点（inliers），从而有效排除异常点的干扰，提高姿态估计的鲁棒性。
 值得注意的是，SQPnP算法以优化旋转矩阵$R$为核心，而平移向量$t$的估计则是基于$R$求解得出，这导致$t$与$R$之间存在一定程度的耦合，可能会对最终优化收敛产生不利影响。针对这一问题，本章在RANSAC-SQPnP求解的结果基础上，进一步引入信赖域优化（Trust Region Optimization，TRO）技术，通过对旋转和平移参数进行解耦和精细优化，最终使得结果收敛到更高精度。
 基于上述分析，本章提出并详细研究了一种结合RANSAC、SQPnP和信赖域优化的PnP求解算法，称为RANSAC-TRO-SQPnP。该算法通过三个关键组件的有机结合，有效应对了实际应用中面临的多重挑战。具体而言，RANSAC组件负责识别并剔除异常点，提高算法的鲁棒性；SQPnP组件提供对关键点噪声的适应能力，保证基础姿态估计的准确性；而TRO组件则对初步估计的6D姿态进行局部精细优化，解决旋转与平移参数的耦合问题。实验结果表明，所提出的RANSAC-TRO SQPnP方法能够显著提高非合作目标6D姿态估计的精度和鲁棒性，特别是在关键点检测存在较大噪声和异常点的复杂场景中表现出色。
@@ -261,10 +263,13 @@ $h(x) = \mathbf{0}_6$ 则表示一组等式约束，使得当 $h(x)=\mathbf{0}$ 
 
 
 
+
+
+
 \section{RANSAC算法}
 \label{sec:ransac_pnp}
 
-RANSAC算法由 Fischler 和 Bolles 于 1981 年提出，用于在含有大量异常值（离群点）的环境下对模型参数进行鲁棒估计。它在数据中反复随机抽取最小数量的样本来拟合模型，并以预先设定的误差阈值判断内点和外点。图~\ref{fig:ransac_flowchart} 展示了本章所采用的 RANSAC 流程：在获取输入数据后，首先对关键变量和计数器进行初始化，包括将迭代次数 \(k\) 置零、内点集合 \(\mathcal{I}_{\text{best}}\) 置空、内点比例 \(\omega_{\text{best}}\) 初始化为 0 以及设置最大迭代次数 \(k_{\max}\) 等。然后在每次迭代中随机选取最小数量的 3D--2D 匹配点（对于 PnP 通常需要 4 或 5 对），求解相机姿态 \(\mathrm{rvec}, \mathrm{tvec}\)。之后计算所有匹配点的关键点重投影误差，并根据阈值 \(\tau\) 判断其是否为内点，从而获得当前迭代的内点集合 \(\mathcal{I}_{i,\text{new}}\)。更新迭代计数后，将该模型与已有最佳模型进行比较：若当前内点数更多（或者内点数相同但总误差更小），则更新最佳模型的内点集合、内点比例与误差等变量，并基于更新后的内点比例 \(\omega_{\text{best}}\) 重新计算满足期望置信度 \(\alpha\) 的最少迭代次数 \(N\)。每次迭代都要检查终止条件，包括迭代次数是否达到或超过 \(k_{\max}\)，以及是否超过由内点比例计算得到的迭代次数 \(N\)。若任何条件满足，算法便可停止并输出当前最佳模型及其内点集合，从而减少不必要的迭代。
+然而通过第~\ref{chap:attention_kpt}预测出的关键点部分难免会出现明显噪声甚可以认为是错误的预测。这些点可以称之为离群点（异常点）。如果这些点直接输入SQPnP算进行6D姿态解算，则会明显影响正确的估计。为了排除这些点的干扰，考虑采用Fischler 和 Bolles 于 1981 年提出RANSAC算法，用于在含有大量异常值的环境下对模型参数进行鲁棒估计。它在数据中反复随机抽取最小数量的样本来拟合模型，如果将其应用与关键点的离群点的剔除那么。可以预先设定的误差阈值判断内点和外点。误差阈值以内的就是内点，而误差以外的点就是外点。图~\ref{fig:ransac_flowchart} 展示了本章所采用的 RANSAC 流程：在获取输入数据后，首先对关键变量和计数器进行初始化，包括将迭代次数 \(k\) 置零、内点集合 \(\mathcal{I}_{\text{best}}\) 置空、内点比例 \(\omega_{\text{best}}\) 初始化为 0 以及设置最大迭代次数 \(k_{\max}\) 等。然后在每次迭代中随机选取最小数量的 3D--2D 匹配点，求解相机姿态 \(\mathrm{rvec}, \mathrm{tvec}\)。之后计算所有匹配点的关键点重投影误差，并根据阈值 \(\tau\) 判断其是否为内点，从而获得当前迭代的内点集合 \(\mathcal{I}_{i,\text{new}}\)。更新迭代计数后，将该模型与已有最佳模型进行比较：若当前内点数更多（或者内点数相同但总误差更小），则更新最佳模型的内点集合、内点比例与误差等变量，并基于更新后的内点比例 \(\omega_{\text{best}}\) 重新计算满足期望置信度 \(\alpha\) 的最少迭代次数 \(N\)。每次迭代都要检查终止条件，包括迭代次数是否达到或超过 \(k_{\max}\)，以及是否超过由内点比例计算得到的迭代次数 \(N\)。若任何条件满足，算法便可停止并输出当前最佳模型及其内点集合，从而减少不必要的迭代。
 
 
 \begin{figure}[htbp]
@@ -372,7 +377,7 @@ RANSAC算法由 Fischler 和 Bolles 于 1981 年提出，用于在含有大量�
 	\centering
 	\caption{RANSAC 中主要参数与变量说明}
 	\label{tab:ransac_params}
-	\begin{tabular}{cc}
+	\begin{tabular}{cp{8cm}}
 		\toprule
 		\textbf{符号} & \textbf{意义}\\
 		\midrule
@@ -477,7 +482,7 @@ RANSAC算法由 Fischler 和 Bolles 于 1981 年提出，用于在含有大量�
 		% 调整信赖域半径
 		\node (radius) [process, below of=accept, yshift=-0.5cm] {
 			根据 $\rho_k$\\
-			调整信赖域半径 $\Delta_{k+1}$\\
+			调整信赖域半径 $\Delta_{k+1}$
 		};
 		
 		% 终止条件
@@ -523,120 +528,8 @@ RANSAC算法由 Fischler 和 Bolles 于 1981 年提出，用于在含有大量�
 
 相对于经典的 LM（Levenberg-Marquardt）算法，信赖域优化方法在收敛的鲁棒性方面具有一定优势。LM 方法实质上在每次迭代中引入阻尼因子调整步长，但其阻尼因子的选取对收敛速度和稳定性有较大影响，需要经验调节。相比之下，信赖域算法通过内部机制自适应地调整信赖域半径，无需人工干预即可控制每步迭代的步长大小，因此对初始值的敏感性更低，能够在病态问题中提供更稳定可靠的收敛表现。
 
-
 \section{RANSAC-TRO SQPnP算法}
-\label{sec:RANSAC-TRO-SQPnP:Algorithm}
 
-如伪代码~\ref{alg:RANSAC_TRO_SQPnP}所示，RANSAC-TRO SQPnP 的核心流程包括以下步骤：
-\begin{itemize}
-	\item \textbf{RANSAC 采样}：从原始点集中随机抽取少量 3D--2D 对，应满足 PnP 最小解的需求。计算其位姿并计算内点数量或关键点重投影误差，重复多次，得到当前最优的位姿初值。
-	\item \textbf{提取内点}：根据关键点重投影误差阈值 $\tau$，将关键点重投影误差较小的点视为内点，形成更可靠的子集。
-	\item \textbf{TRO 细化}：针对上一阶段得到的旋转和平移初解，利用信赖域优化（TRO）策略，在内点集合上进行非线性最小二乘优化，迭代更新位姿直至收敛或达到迭代上限。
-\end{itemize}
-
-该伪代码\autoref{alg:RANSAC_TRO_SQPnP}可分为两大循环：外层循环执行 RANSAC 随机采样与初值估计，内层循环则执行 TRO 对初值的精细化。在 TRO 步骤中，每次迭代都会计算当前的残差和雅可比，并依此构造或近似出局部二次模型，然后在受限的"信赖域"半径 $\Delta$ 内寻找步长。如果实际误差改进和预测改进的比率 $\rho$ 较大，则认为方向与步长有效，进而可能扩大信赖域；否则就收缩信赖域，重新搜索更小步长，从而在局部寻优时保证稳定性。信赖域优化的参数如下：
-\begin{itemize}
-	\item \textbf{$\Delta$}（信赖域半径）：
-	用于限制当次迭代的步长大小，若步长超过 $\Delta$，则会被截断在该半径内。若某次迭代的实际改进率 $\rho$ 较高，说明模型对目标函数的预测准确、步长有效，则在下一次迭代可适当增大 $\Delta$；反之则减小。
-	
-	\item {\texttt{ftol}、\texttt{xtol}、\texttt{gtol}}：
-	在代码默认设置为 $10^{-8}$，分别控制收敛判据中函数值、参数更新量和梯度范数的容差。具体含义是，若目标函数（关键点重投影误差平方和）的相对变化量小于 \texttt{ftol}，则判定收敛；若步长（参数更新量）的范数小于 \texttt{xtol} 与当前参数范数的乘积，则视为收敛；若梯度的无穷范数已足够小，则满足一阶最优性。
-	
-	\item \texttt{max\_nfev}：
-	最大函数评估（关键点重投影误差计算）次数；若超限仍未收敛，则退出，以防在极端情况下陷入过多不收敛迭代。若用户不指定，常以 $100\times\text{参数维度}$ 的经验值做默认限制。
-	
-	\item $\rho$（改进率）：
-	反映了目标函数"实际误差下降量"与"二次模型预测下降量"的比值，用于判断当次迭代步长是否可接受，并据此更新 $\Delta$。当 $\rho$ 较大时，说明模型预测与实际误差相符，步长有效；当 $\rho$ 很小甚至为负值时，则表示步长无效，需要缩小信赖域。
-	
-	\item \texttt{alpha}（阻尼系数）：
-	在部分实现中会结合高斯牛顿或 LM 思路，引入 \texttt{alpha} 来缓解病态问题。代码里设为很小值，并结合 $\Delta$ 更新做简单调节，但不一定需要像 LM 那样反复迭代调试。
-\end{itemize}
-
-将 RANSAC 的内点集合带入到 TRO 的非线性最小二乘迭代中，结合上述各项参数的综合调控，可在局部寻优阶段获得更稳健的步长搜索与数值收敛。若初始估计较好，往往只需较少迭代便可达到满意的旋转和平移精度；若初值不够好或存在噪声与外点，则通过 TRO 优化 RANSAC SQPnP，仍可获得鲁棒稳定的最终解。
-%\begin{algorithm}[!htbp]
-%	\caption{RANSAC-TRO SQPnP}
-%	\label{alg:RANSAC_TRO_SQPnP}
-%	\begin{spacing}{0.9}  % 将行间距缩小到 0.9
-%		\footnotesize        % 如果需要进一步缩小，可以换成 \scriptsize
-%		\begin{algorithmic}[1]
-%			\Procedure{RANSAC-TRO SQPnP}{$\mathbf{P},\mathbf{p},\mathbf{K},n,\tau,k_{\max},\epsilon_f,\epsilon_x,\epsilon_g,n_{\max}$}
-%			\Comment{\parbox[t]{.85\linewidth}{
-%					\textbf{输入:} 
-%					$\mathbf{P}$: 3D点集, 
-%					$\mathbf{p}$: 2D点集, 
-%					$\mathbf{K}$: 相机内参矩阵, 
-%					$n$: 每次随机采样的点数, 
-%					$\tau$: 误差阈值, 
-%					$k_{\max}$: 最大迭代次数, 
-%					$\epsilon_f$: 函数容差, 
-%					$\epsilon_x$: 参数容差, 
-%					$\epsilon_g$: 梯度容差, 
-%					$n_{\max}$: 最大函数评估次数.\\[4pt]
-%					\textbf{输出:} 
-%					$\mathbf{r}^*$: 最优旋转向量, 
-%					$\mathbf{t}^*$: 最优平移向量, 
-%					$\mathcal{I}^*$: 最佳内点集合
-%			}}
-%			
-%			\State 初始化 $e^* \gets \texttt{MAX\_DOUBLE},\;\mathcal{I}^* \gets \emptyset$
-%			
-%			\For{$k \gets 1$ to $k_{\max}$}
-%			\State 随机采样 $\mathcal{I}_k \gets \texttt{RandomSample}(n, |\mathbf{P}|)$
-%			\State 提取对应点集 $\mathbf{P}_k \gets \mathbf{P}[\mathcal{I}_k]$, $\mathbf{p}_k \gets \mathbf{p}[\mathcal{I}_k]$
-%			\State 姿态估计 $\mathbf{r}_k, \mathbf{t}_k \gets \texttt{SQPnP}(\mathbf{P}_k, \mathbf{p}_k, \mathbf{K})$
-%			\State 计算误差 $e_k \gets \texttt{ReprojectError}(\mathbf{P}[\mathcal{I}_k], \mathbf{p}[\mathcal{I}_k], \mathbf{K}, \mathbf{r}_k, \mathbf{t}_k)$
-%			\If{$e_k < e^*$}
-%			\State 更新最优值 $e^* \gets e_k,\;\mathcal{I}^* \gets \mathcal{I}_k$
-%			\State 存储最优姿态 $\mathbf{r}^* \gets \mathbf{r}_k,\;\mathbf{t}^* \gets \mathbf{t}_k$
-%			\EndIf
-%			\EndFor
-%			
-%			\State 使用最佳内点集合 $\mathbf{P}^* \gets \mathbf{P}[\mathcal{I}^*],\;\mathbf{p}^* \gets \mathbf{p}[\mathcal{I}^*]$
-%			\State 初始化优化参数 $\mathbf{x} \gets [\mathbf{q}^*, \mathbf{t}^*]$
-%			\State 计算初始误差 $\mathbf{f} \gets \texttt{ReprojectError}(\mathbf{P}^*, \mathbf{p}^*, \mathbf{K}, \mathbf{x}[0], \mathbf{x}[1])$
-%			\State 计算雅可比矩阵 $\mathbf{J} \gets \texttt{Jacobian}(\mathbf{P}^*, \mathbf{p}^*, \mathbf{K}, \mathbf{x}[0], \mathbf{x}[1])$
-%			\State 初始化计数器 $n_f, n_J \gets 1, 1$, $\mathbf{g} \gets \mathbf{J}^\top \mathbf{f}$, $i \gets 0$, $s \gets \texttt{None}$
-%			
-%			\While{未满足终止条件}
-%			\If{$\|\mathbf{g}\|_\infty < \epsilon_g$}
-%			\State $s \gets 1$
-%			\State \textbf{break}
-%			\EndIf
-%			\State $\mathbf{g}_h, \mathbf{J}_h, \mathbf{U}, \mathbf{s}, \mathbf{V}, \mathbf{u}_f \gets \texttt{ComputeAproximateProblem}(\mathbf{J}, \mathbf{f})$
-%			\While{$\rho \leq 0$ \textbf{ and } $n_f < n_{\max}$}
-%			\State $\boldsymbol{\delta}_h, \boldsymbol{\delta}, \mathbf{x}_{\text{new}}, \mathbf{f}_{\text{new}} \gets \texttt{ComputeStep}(\mathbf{g}_h, \mathbf{J}_h, \mathbf{U}, \mathbf{s}, \mathbf{V}, \mathbf{u}_f, \mathbf{x}, \Delta)$
-%			\State $n_f \gets n_f + 1$
-%			\If{\textbf{not} \texttt{IsFinite}($\mathbf{f}_{\text{new}}$)}
-%			\State $\Delta \gets \Delta \cdot 0.5$
-%			\State \textbf{continue}
-%			\EndIf
-%			\State $\rho, \Delta_{\text{new}}, r, \|\boldsymbol{\delta}\| \gets \texttt{ComputeRatio}(\mathbf{f}, \mathbf{f}_{\text{new}}, \boldsymbol{\delta}_h, \Delta)$
-%			\If{满足终止条件}
-%			\State \textbf{break}
-%			\EndIf
-%			\State \texttt{Update}($\Delta$, $r$)
-%			\EndWhile
-%			
-%			\If{$\rho > 0$}
-%			\State 更新参数 $\mathbf{x}, \mathbf{f} \gets \mathbf{x}_{\text{new}}, \mathbf{f}_{\text{new}}$
-%			\State 更新旋转和平移 $\mathbf{r}, \mathbf{t} \gets \mathbf{x}[0],\;\mathbf{x}[1]$
-%			\State 重新计算雅可比矩阵和梯度 
-%			$\mathbf{J}, \mathbf{g} \gets \texttt{Jacobian}(\mathbf{P}^*, \mathbf{p}^*, \mathbf{K}, \mathbf{r}, \mathbf{t}),\; \mathbf{J}^\top \mathbf{f}$
-%			\State $n_J \gets n_J + 1$
-%			\EndIf
-%			\State $i \gets i + 1$
-%			\EndWhile
-%			
-%			\If{$s$ 为 \texttt{None}}
-%			\State $s \gets 0$
-%			\EndIf
-%			
-%			\State 更新最终姿态 $\mathbf{r}^*, \mathbf{t}^* \gets \mathbf{x}[0], \mathbf{x}[1]$
-%			\State \textbf{return} $\mathbf{r}^*, \mathbf{t}^*, \mathcal{I}^*$
-%			\EndProcedure
-%		\end{algorithmic}
-%	\end{spacing}
-%\end{algorithm}
 
 
 
@@ -645,59 +538,57 @@ RANSAC算法由 Fischler 和 Bolles 于 1981 年提出，用于在含有大量�
 \section{实验分析}
 \label{sec:RANSAC-TRO-SQPnP:ExperimentCompare}
 \vspace{1ex}
-\subsection{SQPnP的参数设置}
-表 \ref{tab:sqpnp-params} 列出了 SQPnP 算法中与迭代收敛和数值稳定性相关的主要参数设置。大多数收敛阈值如 \(\epsilon_{\mathrm{sqp}}\)、\(\epsilon_{\mathrm{orth}}\)、\(\epsilon_{\mathrm{vec}}\)、\(\epsilon_{\mathrm{err}}\) 等，都是为了控制迭代更新、旋转正交性、多解筛选以及关键点重投影误差等方面的精度，确保在满足一定精度的前提下及时停止计算，从而避免无意义的过度迭代。退化判断阈值 \(\epsilon_{\mathrm{var}}\) 用于识别输入数据是否有较大共线、共面或分布极为不平衡等情况，从而在必要时提前终止或进行特殊处理。最大迭代次数 \(K_{\mathrm{max}}\) 则在确保精度的同时，防止算法在极端场景下因数值问题而陷入死循环或过度迭代。通过合理设置这些参数，可以在保证求解精度的同时，提高算法的稳定性和效率。
-\begin{table}[htbp]
-	\centering
-	\caption{SQPnP的主要参数设置}
-	\label{tab:sqpnp-params}
-	\begin{tabular}{l c p{7.5cm}}
-		\toprule
-		参数 & 数值 & 解释 \\
-		\midrule
-		
-		$\epsilon_{\mathrm{sqp}}$      & $10^{-10}$ & 
-		SQP 迭代更新量 $\|\delta\|^2$ 的收敛阈值，小于此值认为已充分收敛。\\[3pt]
-		
-		$\epsilon_{\mathrm{orth}}$     & $10^{-8}$  & 
-		判断当前旋转矩阵正交误差是否可忽略，例如 $\|R^\top R - I\|$ 是否足够小。\\[3pt]
-		
-		$\epsilon_{\mathrm{vec}}$      & $10^{-10}$ &
-		判断两个旋转向量是否几乎相同，以便在多解筛选或重复解检测时去重。\\[3pt]
-		
-		$\epsilon_{\mathrm{err}}$      & $10^{-6}$  &
-		判断两次关键点重投影误差的平方和是否近似相等，避免无意义的细微迭代。\\[3pt]
-		
-		$\epsilon_{\mathrm{var}}$      & $10^{-5}$  &
-		判断输入点分布或观测矩阵是否退化（如共线、共面）；低于此值可能无法得到有效解。\\[3pt]
-		
-		$K_{\mathrm{max}}$             & 15         &
-		SQP 算法最大迭代步数上限，用于防止在极端情况下陷入死循环或过度迭代。\\
-		\bottomrule
-	\end{tabular}
-\end{table}
+%\subsection{SQPnP的参数设置}
+%表 \ref{tab:sqpnp-params} 列出了 SQPnP 算法中与迭代收敛和数值稳定性相关的主要参数设置。大多数收敛阈值如 \(\epsilon_{\mathrm{sqp}}\)、\(\epsilon_{\mathrm{orth}}\)、\(\epsilon_{\mathrm{vec}}\)、\(\epsilon_{\mathrm{err}}\) 等，都是为了控制迭代更新、旋转正交性、多解筛选以及关键点重投影误差等方面的精度，确保在满足一定精度的前提下及时停止计算，从而避免无意义的过度迭代。退化判断阈值 \(\epsilon_{\mathrm{var}}\) 用于识别输入数据是否有较大共线、共面或分布极为不平衡等情况，从而在必要时提前终止或进行特殊处理。最大迭代次数 \(K_{\mathrm{max}}\) 则在确保精度的同时，防止算法在极端场景下因数值问题而陷入死循环或过度迭代。通过合理设置这些参数，可以在保证求解精度的同时，提高算法的稳定性和效率。
+%\begin{table}[htbp]
+%	\centering
+%	\caption{SQPnP的主要参数设置}
+%	\label{tab:sqpnp-params}
+%	\begin{tabular}{l c p{7.5cm}}
+%		\toprule
+%		参数 & 数值 & 解释 \\
+%		\midrule
+%		
+%		$\epsilon_{\mathrm{sqp}}$      & $10^{-10}$ & 
+%		SQP 迭代更新量 $\|\delta\|^2$ 的收敛阈值，小于此值认为已充分收敛。\\[3pt]
+%		
+%		$\epsilon_{\mathrm{orth}}$     & $10^{-8}$  & 
+%		判断当前旋转矩阵正交误差是否可忽略，例如 $\|R^\top R - I\|$ 是否足够小。\\[3pt]
+%		
+%		$\epsilon_{\mathrm{vec}}$      & $10^{-10}$ &
+%		判断两个旋转向量是否几乎相同，以便在多解筛选或重复解检测时去重。\\[3pt]
+%		
+%		$\epsilon_{\mathrm{err}}$      & $10^{-6}$  &
+%		判断两次关键点重投影误差的平方和是否近似相等，避免无意义的细微迭代。\\[3pt]
+%		
+%		$\epsilon_{\mathrm{var}}$      & $10^{-5}$  &
+%		判断输入点分布或观测矩阵是否退化（如共线、共面）；低于此值可能无法得到有效解。\\[3pt]
+%		
+%		$K_{\mathrm{max}}$             & 15         &
+%		SQP 算法最大迭代步数上限，用于防止在极端情况下陷入死循环或过度迭代。\\
+%		\bottomrule
+%	\end{tabular}
+%\end{table}
 
 
 \subsection{算法参数的设置}
-为了求解PnP问题，首先要按照6D姿态解算场景的相机内参进行设置，这里的相机内参采用的是SPEED/SPEED+数据集以及自建数据集渲染时所设置的相机参数，如表~\ref{tab:camera_params}所示。
-
 \begin{table}[htbp]
 	\centering
 	\caption{PnP求解需要的相机参数}
 	\label{tab:camera_params_solvepnp}
-	\begin{tabular}{lccc}
+	\begin{tabular}{lcc}
 		\toprule
-		\textbf{参数名称} & \textbf{符号} & \textbf{数值} & \textbf{单位} \\
+		\textbf{参数名称} & \textbf{符号} & \textbf{数值} \\
 		\midrule
-		焦距(水平) & $f_x$ & \(3.003\times10^{3}\) & pixel \\
-		焦距(垂直) & $f_y$ & \(3.003\times10^{3}\) & pixel \\
-		主点横坐标 & $c_x$ & 960 & pixel \\
-		主点纵坐标 & $c_y$ & 600 & pixel \\
-		径向畸变系数1 & $k_1$ & \(-2.238\times10^{-1}\) & -- \\
-		径向畸变系数2 & $k_2$ & \(5.141\times10^{-1}\) & -- \\
-		切向畸变系数1 & $p_1$ & \(-6.650\times10^{-4}\) & -- \\
-		切向畸变系数2 & $p_2$ & \(-2.140\times10^{-4}\) & -- \\
-		径向畸变系数3 & $k_3$ & \(-1.312\times10^{-1}\) & -- \\
+		焦距(水平) & $f_x$ & \(3.003\times10^{3}\) \\
+		焦距(垂直) & $f_y$ & \(3.003\times10^{3}\) \\
+		主点横坐标 & $c_x$ & 960 \\
+		主点纵坐标 & $c_y$ & 600 \\
+		径向畸变系数1 & $k_1$ & \(-2.238\times10^{-1}\) \\
+		径向畸变系数2 & $k_2$ & \(5.141\times10^{-1}\) \\
+		切向畸变系数1 & $p_1$ & \(-6.650\times10^{-4}\) \\
+		切向畸变系数2 & $p_2$ & \(-2.140\times10^{-4}\) \\
+		径向畸变系数3 & $k_3$ & \(-1.312\times10^{-1}\) \\
 		\bottomrule
 	\end{tabular}
 \end{table}
@@ -705,6 +596,43 @@ RANSAC算法由 Fischler 和 Bolles 于 1981 年提出，用于在含有大量�
 
 
 
+在前述的序列二次规划（SQP）求解过程中，需要针对数值稳定性与物理约束（如旋转矩阵正交性、正定性）设置若干阈值。表 \ref{tab:SQPnP_coreparams} 列出了本算法中常用的主要参数及其典型取值。这些阈值旨在平衡数值精度和运算效率，其中 \(\tau_{\mathrm{rank}}\) 用于判断 \(\Omega\) 的秩是否可能出现严重亏损（如场景点云退化到共面或更低维空间）；\(\tau_{\mathrm{step}}\) 控制增量 \(\|\delta\|^2\) 的收敛阈值，使得算法能在合适精度下停止迭代；\(\tau_{\det}=1.001\) 则出于经验考量，用于检查旋转矩阵行列式相对 \(+1\) 的偏离程度，若超过此值说明已偏离正交矩阵较多，需要执行“最近正交化”修正；\(\tau_{\mathrm{orth}}\) 用于衡量向量 \(\mathbf{e}\) 与正交矩阵的接近程度，若偏差过大则表明初始旋转估计需进一步调整；\(K_{\max}\) 则限制 SQP 的最大迭代次数，防止在数值异常或场景退化时无限迭代而无实际收益。通过在大量实验场景中的测试，以上取值可兼顾稳定性与效率，若在其他应用场景中遇到数值异常或收敛速度过慢，可根据精度需求适当微调这些参数。
+
+\begin{table}[htb]
+	\centering
+	\caption{与SQPnP核心迭代过程直接相关的主要参数}
+	\label{tab:SQPnP_coreparams}
+	\begin{tabular}{cp{2cm}p{7cm}}
+		\toprule
+		参数 & 参数值 & 含义 \\ 
+		\midrule
+		\(\tau_{\mathrm{rank}}\)
+		& \(10^{-7}\)
+		& 判断 \(\Omega\) 是否存在秩亏损的阈值；
+		若过低则说明场景退化。 \\[6pt]
+		
+		\(\tau_{\mathrm{step}}\)
+		& \(10^{-10}\)
+		& SQP迭代中，当增量\(\|\delta\|^2\)低于此阈值时判定收敛；
+		控制终止条件。 \\[6pt]
+		
+		\(\tau_{\det}\)
+		& 1.001
+		& 判断解中旋转矩阵的\(\det(R)\)偏离\(+1\)是否过大；
+		若\(\det(R) > 1.001\)，则进行正交化处理。 \\[6pt]
+		
+		\(\tau_{\mathrm{orth}}\)
+		& \(10^{-8}\)
+		& 用于衡量向量\(\mathbf{e}\)是否已接近正交矩阵的阈值；
+		约束迭代初始解的正交性。 \\[6pt]
+		
+		\(K_{\max}\)
+		& 15
+		& SQP最大迭代次数；
+		防止在极端情况下过度迭代而耗时过长。 \\
+		\bottomrule
+	\end{tabular}
+\end{table}
 
 % 示例性内容开始
 如图~\ref{fig:ransac_flowchart}所示，RANSAC算法在输入阶段会根据置信度 $\alpha$ 和内点阈值 $\tau$ 对采样结果进行判别。为兼顾算法的精度和效率，需合理设置该算法的参数，例如置信度 $\alpha$ 直接影响抽样成功的概率，而 $\tau$ 决定了判定内点与否的误差门槛。此外，还需设定最大迭代次数 $k_{\max}$，以避免在极端情况下过多的迭代。具体设置如表~\ref{tab:ransac_params_setting} 所示。
@@ -731,7 +659,7 @@ RANSAC算法由 Fischler 和 Bolles 于 1981 年提出，用于在含有大量�
 	\centering
 	\caption{信赖域优化算法参数及初始值}
 	\label{tab:tr_parameters}
-	\begin{tabular}{llp{8cm}}
+	\begin{tabular}{cccp{8cm}}
 		\hline
 		参数 & 数值 & 说明 \\
 		\hline
@@ -747,6 +675,9 @@ RANSAC算法由 Fischler 和 Bolles 于 1981 年提出，用于在含有大量�
 
 
 \subsection{PnP 方法在 SPEED+数据集上的对比}
+如第~\ref{chap:attention_kpt}章的图~\ref{fig:tango_demo}所示，该数据集场景丰富，目标截断，光照过暗，背景干扰等情形会对关键点检测网络造成更为显著的噪声。因此决定在SPEED+数据集上对本章提出的RANSAC-TRO SQPnP算法进行验证，
+从表 \ref{tab:PnPCmp} 可见，与 EPnP 相比，SQPnP 在三个指标上都有明显提升，表明 SQPnP 的优化建模，优化求解手段对应关键点噪声更为鲁棒，使得求解精度明显高于 EPnP；RANSAC + SQPnP 的精度比单纯 SQPnP + LM 或 TRO 更优，说明异常点(外点)的存在确实会显著影响优化求解的过程，使其不能够收敛到理想的精度。如果首先选择去除外点则可以在不进行优化的情况下达到更优的精度。在 RANSAC-SQPnP 的基础上，对初始姿态进行 LM 和 TRO 两种后续优化时，LM 在 $score_{\text{ort}}^+$ 上略好一些，但 $score_{\text{pst}}^+$ 更差，导致最终 $score^+$ 下降；而 TRO 则在 $score_{\text{pst}}^+$ 与整体 $score^+$ 指标上优势更显著；这说明相对于 LM 优化，TRO 通过限制在信赖域上的优化，有利于局部更为精确的寻优从而在整体上达到更高的精度。以上对比说明了SQPnP算法的鲁棒性，也说明了RANSAC异常点提出机制以及TRO优化对于SQPnP算法求解精度提高的有效性。
+
 \begin{table}[!htbp]
 	\centering
 	\caption{在SPEED+合成数据集上的PnP算法对比}
@@ -766,7 +697,6 @@ RANSAC算法由 Fischler 和 Bolles 于 1981 年提出，用于在含有大量�
 	\label{tab:PnPCmp}
 \end{table}
 
-从表 \ref{tab:PnPCmp} 可见，与 EPnP 相比，SQPnP 在三个指标上都有明显提升，表明 SQPnP 的优化建模，优化求解手段对应关键点噪声更为鲁棒，使得求解精度明显高于 EPnP；RANSAC + SQPnP 的精度比单纯 SQPnP + LM 或 TRO 更优，说明异常点(外点)的存在确实会显著影响优化求解的过程，使其不能够收敛到理想的精度。如果首先选择去除外点则可以在不进行优化的情况下达到更优的精度。在 RANSAC-SQPnP 的基础上，对初始姿态进行 LM 和 TRO 两种后续优化时，LM 在 $score_{\text{ort}}^+$ 上略好一些，但 $score_{\text{pst}}^+$ 更差，导致最终 $score^+$ 下降；而 TRO 则在 $score_{\text{pst}}^+$ 与整体 $score^+$ 指标上优势更显著；这说明相对于 LM 优化，TRO 通过限制在信赖域上的优化，有利于局部更为精确的寻优从而在整体上达到更高的精度。
 
 
 \subsection{与其他空间非合作目标6D姿态估计方法的对比}
