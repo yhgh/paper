@@ -1,1 +1,886 @@
-xxxxxx
+%% 
+%% Copyright 2019-2024 Elsevier Ltd
+%% 
+%% This file is part of the 'CAS Bundle'.
+%% --------------------------------------
+%% 
+%% It may be distributed under the conditions of the LaTeX Project Public
+%% License, either version 1.3c of this license or (at your option) any
+%% later version.  The latest version of this license is in
+%%    http://www.latex-project.org/lppl.txt
+%% and version 1.3c or later is part of all distributions of LaTeX
+%% version 1999/12/01 or later.
+%% 
+%% The list of all files belonging to the 'CAS Bundle' is
+%% given in the file `manifest.txt'.
+%% 
+%% Template article for cas-sc documentclass for 
+%% double column output.
+
+\documentclass[a4paper,fleqn]{cas-sc}
+
+% If the frontmatter runs over more than one page
+% use the longmktitle option.
+
+%\documentclass[a4paper,fleqn,longmktitle]{cas-sc}
+
+%\usepackage[numbers]{natbib}
+\usepackage[authoryear]{natbib}
+%\usepackage[authoryear,longnamesfirst]{natbib}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{float}
+
+%%%Author macros
+\def\tsc#1{\csdef{#1}{\textsc{\lowercase{#1}}\xspace}}
+\tsc{WGM}
+\tsc{QE}
+%%%
+
+% Uncomment and use as if needed
+%\newtheorem{theorem}{Theorem}
+%\newtheorem{lemma}[theorem]{Lemma}
+%\newdefinition{rmk}{Remark}
+%\newproof{pf}{Proof}
+%\newproof{pot}{Proof of Theorem \ref{thm}}
+
+\begin{document}
+\let\WriteBookmarks\relax
+\def\floatpagepagefraction{1}
+\def\textpagefraction{.001}
+
+
+\shorttitle{}
+% Short author
+\shortauthors{Hao Yang et~al}  
+
+% Main title of the paper
+\title[]{Six Degrees-of-Freedom Pose Estimation of Non-Cooperative Space Object based on Approximate Three-Dimensional Keypoint Similarity Loss}  
+
+
+
+
+\author[1]{Hao Yang}[style=chinese]
+\ead{suchtch@163.com}
+\credit{Methodology, Data Curation, Writing - Original Draft}
+\affiliation[1]{organization={School of Physics, Northeast Normal University},
+	addressline={Renmin Street 5268}, 
+	city={Changchun},
+	postcode={130024}, 
+	country={China}}
+
+\author[1]{Jipeng Huang}[style=chinese,orcid=0000-0001-5519-9561]
+\cormark[1]
+\ead{huangjp848@nenu.edu.cn}
+\credit{Writing - Review \& Editing, Supervision, Project administration, Funding acquisition}
+\cortext[cor1]{Corresponding author: Jipeng Huang}
+
+\author[2]{Hong Ren}[style=chinese]
+\ead{renhong@ciomp.ac.cn}
+\credit{Supervision, Project administration}
+
+
+\author[2]{Haichao Sun}[style=chinese]
+\ead{sunhaichao@ciomp.ac.cn}
+\credit{Supervision, Project administration}
+
+
+\author[2]{Rui Tian}[style=chinese]
+\ead{tianrui_81@aliyun.com}
+\credit{Supervision, Project administration}
+
+\affiliation[2]{organization={Changchun Institute of Optics,Fine Mechanics and Physics,Chinese Academy of Sciences},
+	addressline={Dongnanhu Road 3888}, 
+	city={Changchun},
+	postcode={130033}, 
+	country={China}}
+
+
+% Here goes the abstract
+\begin{abstract}
+Accurate six-degree-of-freedom(6D) pose estimation is crucial for autonomous docking and manipulation of non-cooperative space objects in aerospace applications. A significant challenge in this study was addressing the considerable three-dimensional (3D) variations in keypoints, while simultaneously mitigating the computational inefficiency inherent in dense prediction networks such as those utilizing heatmap-based approaches. To address these issues, we propose a novel approach that integrates advanced artificial intelligence techniques specifically designed for aerospace applications. We introduce a keypoint-based method utilizing Approximate Three-Dimensional Keypoint Similarity Loss(A3DKS) to manage large-scale three-dimensional variations. Our approach incorporates the Efficient Vision Transformer(EfficientViT) and Triplet Attention Neck(TANeck) to develop a keypoint prediction network, achieving a balance between low parameter count and high accuracy. Furthermore, we employ Random Sample Consensus-Trust Region Optimization Sequential Quadratic Programming for Perspective-n-Point(RANSAC-TRO PnP) to effectively handle both outliers and noisy keypoints. Our method demonstrates significant improvements in six-degree-of-freedom pose accuracy with a low parameter count, making it suitable for precision control in aerospace operations. The results from ablation studies and final experiments confirm the superiority of our approach, emphasizing its potential impact on future autonomous space missions.
+\end{abstract}
+
+% Research highlights
+\begin{highlights}
+	\item Introduced the Approximate 3D Keypoint Similarity(A3DKS) loss function, which considers 3D scale for improved keypoint detection accuracy.
+	
+	\item Proposed a novel keypoint detection network combining Efficient Vison Transformer(EfficientViT) and Triplet Attention(TANeck) based on the YOLOv8 architecture for spacecraft keypoints detection.
+	
+	\item Developed a Random Sample Consensus-Trust Region Optimization Sequential Quadratic Programming method for Perspective-n-Point, which is robust to outliers and point noise, to solve the Perspective-n-Point problem.
+\end{highlights}
+
+
+
+% Keywords
+% Each keyword is seperated by \sep
+\begin{keywords}
+Non-cooperative space objects \sep Six-
+degree-of-freedom pose estimation
+\sep Attention mechanism
+\sep Vision Transformer
+\sep Artificial intelligence
+\sep Artificial intelligence for aerospace applications
+\end{keywords}
+
+\maketitle 
+
+\section{Introduction}
+In the rapidly evolving field of space exploration and satellite servicing, accurately determining the six-degree-of-freedom (6D) pose—encompassing both 3D position and orientation—of uncooperative space objects is essential for missions such as autonomous docking, debris removal, and on-orbit servicing \citep{d2014pose,modelbased_algorithm,capuano2019robust}. Despite its importance, this task remains challenging. Non-cooperative targets typically lack predefined markers or active communication systems and often exhibit considerable variations in distance, rotational degrees of freedom, and complex 3D structures. Current solutions can be broadly categorized into traditional image processing methods and deep learning-based approaches. Traditional methods generally rely on distinctive, relatively fixed features (e.g., edges or contours), rendering them vulnerable to changes in illumination, occlusions, and measurement noise. In contrast, deep learning-based methods typically demonstrate greater robustness and can be divided into direct pose regression and keypoint-based approaches \citep{huan2020pose,park2019towards,wang2022revisiting}. Although direct pose regression struggles with mapping high-dimensional image data to precise 6D poses \citep{sharma2018pose,sharma2019pose}, decomposing the process into keypoint detection followed by Perspective-n-Point (PnP) often yields superior accuracy.
+
+Nevertheless, keypoint detection for space targets remains a non-trivial challenge. Traditional feature-based algorithms, such as SIFT \citep{sift}, FAST \citep{fast}, or ORB \citep{orb}, often encounter difficulties with weak textures or repetitive structures and may fail under dramatic lighting variations and background interference \citep{Dai2019Comparison,bojanic2019comparison}. Incorporating an object detection stage \citep{chen2019satellite,park2019towards,black2021real,wang2022revisiting} can mitigate background clutter but increases computational overhead—an undesirable tradeoff in resource-constrained scenarios. Moreover, non-cooperative targets may be partially occluded and exhibit substantial appearance variations, further complicating pose estimation even for advanced algorithms.
+
+Our proposed method directly addresses critical requirements in satellite docking, servicing, and debris-removal missions. Its streamlined parameter footprint facilitates more efficient onboard computation—crucial for real-time decision-making—while robust detection mechanisms minimize failure risks in safety-critical operations. The resulting pose estimates can guide robotic arms, propulsion systems, or capture mechanisms with enhanced confidence, thereby reducing mission costs and improving overall safety in orbit. These considerations underscore the need for a more efficient and robust approach.
+
+In recent years, numerous deep learning models for 6D pose estimation have demonstrated impressive performance but often demand substantial computational resources \citep{Pavlakos_2017_ICRA,He_2020_CVPR, peng2019pvnet}, making them impractical for real-time or onboard operations. Conversely, certain approaches reduce parameter counts and FLOPs \citep{Zhao_2020_CVPR} but may compromise pose accuracy, particularly when dealing with large-scale or highly non-rigid objects. This dichotomy highlights the necessity of balancing model efficiency with robust detection capabilities—an especially critical consideration in aerospace applications where computational resources are frequently limited.
+
+Aerospace applications, particularly those involving uncooperative satellite servicing or on-orbit inspections, present unique challenges that differ significantly from ground-based or indoor pose-estimation tasks. These challenges include a wide operational distance range between the observing camera and the spacecraft, highly variable and often intricate spacecraft geometries, and extreme illumination conditions (such as insufficient lighting or excessively intense illumination). These factors can induce substantial variability in the appearance of a target spacecraft across different image frames, thereby complicating reliable feature extraction. In this work, we address these challenges through a combination of attention mechanisms and lightweight architectures. Specifically, we leverage a hybrid design that integrates a Transformer-based backbone and a Triplet Attention Neck (TANeck) module to enhance the model's robustness in handling drastic appearance changes. The Transformer component contributes global feature context, which is crucial for large-scale shape variations or partially visible targets, while the Triplet Attention mechanism selectively refines feature channels to preserve key information, even under occlusion or degraded illumination. Additionally, we replace the default backbone with EfficientViT to ensure that our enhanced global and local feature extraction remains feasible within the strict computational and power constraints commonly encountered on spaceborne platforms.
+
+To address the aforementioned challenges, we propose a two-stage framework that first detects keypoints in the image plane using a novel loss function and an efficient neural network backbone, then solves the PnP problem with a robust algorithm. Specifically, we introduce an Approximate 3D Point Similarity (A3DKS) loss, which better accounts for 3D variation by rescaling 2D keypoints into approximate 3D space. Unlike the OKS loss (Object Keypoint Similarity)—designed primarily for ground-based targets—A3DKS is more appropriate for scenarios where objects exhibit wide-ranging 3D transformations. For our keypoint detection network, we adopt a YOLOv8-style backbone-head architecture but replace its default backbone with EfficientViT \citep{liu2023efficientvit}, which leverages vision Transformers for enhanced feature extraction with minimal parameter requirements. Additionally, we incorporate Triplet Attention \citep{triplet} into the network neck to improve detection performance under occlusion and partial visibility conditions.
+
+Once the keypoints are obtained, we employ RANSAC-TRO SQPnP for pose estimation. This method begins with RANSAC-based inlier selection to handle outliers, then applies SQPnP \citep{terzakis2020consistently}—which formulates pose estimation as an 8-dimensional hypersphere quadratic programming problem—to robustly solve for rotation and translation. We further refine the solution with Trust Region optimization \citep{trf}, ensuring higher accuracy by minimizing the risk of local minima. Our final pipeline offers four principal advantages: (1) \textbf{Enhanced 3D Adaptability} via the A3DKS loss, (2) \textbf{Improved Feature Extraction} through EfficientViT and Triplet Attention, (3) \textbf{Robust Pose Estimation} by RANSAC-TRO SQPnP, and (4) \textbf{Computational Efficiency} owing to a lightweight architecture suitable for onboard deployment. Although our method may not outperform all competing approaches on certain benchmarks, it achieves compelling results on the SPEED dataset with a significantly reduced parameter count. Ablation studies confirm that each component—A3DKS, EfficientViT, Triplet Attention, and RANSAC-TRO SQPnP—contributes to improved accuracy.
+
+The remainder of this paper is organized as follows. Section~\ref{sec:method} details our proposed method, including data preparation, network architecture, and loss function design. Section~\ref{sec:experiments} presents ablation studies, experimental results, and comparisons with alternative methods. We then analyze these results and discuss their implications. Finally, Section~\ref{sec:conclusion} concludes the paper and outlines future research directions.
+
+\section{Methods}\label{sec:method}
+Aerospace applications, particularly those involving uncooperative satellite servicing or on-orbit inspections, present unique challenges that differ markedly from ground-based or indoor pose-estimation tasks. These challenges include a wide range of operational distances between the observing camera and the spacecraft, highly variable and often intricate spacecraft geometries, and extreme illumination conditions (e.g., stark shadows, direct sunlight, or reflected light from Earth's surface). These factors can cause significant variability in the appearance of a target spacecraft, complicating reliable feature extraction. In this work, we address these challenges through a combination of attention mechanisms and lightweight architectures, ensuring that our enhanced global and local feature extraction remains feasible under strict computational and power constraints.
+
+\subsection{Dataset Preparation}
+We utilized the open dataset SPEED+ \citep{speed+} developed by the European Space Agency (ESA) in 2021. The SPEED+ dataset provides diverse images captured under varying lighting conditions and orientations; it represents the most comprehensive dataset available for 6D pose estimation of uncooperative space objects. The images feature an uncooperative space object named Tango, with precise 6D pose annotations for each image. However, as our method is keypoint-based, we required labeled keypoints to train our keypoint detection neural network. Therefore, we first identified 15 distinctive sharp corners (such as Tango backbone sharp corners and antenna corners) and calculated their precise 3D coordinates. For each of these 15 corners, we selected multiple images where the corner was clearly visible, manually marked the region containing the corner, and then solved for the 3D coordinate of the corner using multi-view geometry based on the manually labeled points and corresponding 6D poses. Having established these 15 3D keypoints, we could then systematically label the 2D keypoints on each image by constructing the projection matrix using the provided camera intrinsic parameters and the labeled 6D pose for each image. We also employed the earlier version of SPEED+ dataset, SPEED, to evaluate our method and compare it with other approaches that were validated exclusively on SPEED. SPEED additionally provides unlabeled authentic images, enabling validation of performance in natural environments.
+
+To further diversify our datasets, we generated synthetic images of Starlink and Nauka MLM models using BlenderProc, a state-of-the-art tool for high-quality photorealistic rendering. These datasets served to validate the model's generalization capability across spacecraft with different geometric configurations. Examples from these three datasets are illustrated in Fig.~\ref{fig:datasetsdemo}. The inclusion of both real (SPEED, SPEED+) and synthetic (Starlink, Nauka MLM) data ensures diversity and broad applicability of our approach.
+
+\begin{figure*}[!htbp]
+	\centering
+	\includegraphics[width=1\textwidth]{Fig1} 
+	\caption{Representative examples from the three datasets employed in this study: SPEED+, an open dataset provided by ESA, and Nauka MLM and Starlink, our synthetic datasets generated for comprehensive evaluation.}
+	\label{fig:datasetsdemo}
+\end{figure*}
+
+\subsection{Method Overview}\label{sec:Method_Overview}
+Our keypoint prediction method adopts the architecture introduced by YOLOv8, which comprises three principal components: backbone, neck, and head. The backbone functions as the primary feature extractor, while the neck establishes a bidirectional flow that processes features and outputs them to the head at three distinct scales. The head decouples these output features and performs keypoint regression. Although this architecture has achieved state-of-the-art (SOTA) performance in human pose estimation, it requires adaptation for our specific tasks. Space objects typically exhibit more complex geometries and greater degrees of freedom with extensive variations, resulting in significant differences in their projected appearances. This high variability also means that even when an object's center point lies within the image region, portions of the object may extend beyond the image boundaries. Such partial visibility presents a substantial challenge for keypoint detection. Attention mechanisms offer advantages in addressing these issues but can introduce considerable computational overhead. Recent advances, however, have focused on developing more efficient attention mechanisms. The occlusion problem likely stems from inadequate global understanding, particularly for features that extend beyond the image boundary. In such cases, the model must rely on global inference to accurately determine these keypoints.
+
+We adopt EfficientViT, a lightweight vision Transformer architecture, to capture global dependencies with minimal parameter requirements—an essential characteristic for onboard space applications. Concurrently, we integrate Triplet Attention Neck (TANeck) to preserve crucial high-level information under conditions of partial visibility. Together, these components form a robust keypoint prediction network that effectively manages the complex geometries and substantial 3D variations commonly encountered in non-cooperative spacecraft.
+
+To further enhance pose estimation accuracy and robustness, we propose a novel optimization approach that combines RANSAC and the Trust Region Optimization (TRO) \citep{coleman1996interior} method. After predicting the 2D keypoints, we combine them with their corresponding 3D keypoints and employ SQPnP \citep{terzakis2020consistently} to determine the 6D pose of the uncooperative space object. Our approach first applies RANSAC to select a subset of keypoints and identify the inlier set that minimizes reprojection error, effectively excluding outliers. The pose calculated by SQPnP using this inlier set then serves as the initial value for the TRO method, which further refines the pose estimate. Compared to direct application of TRO on the original point set, the RANSAC pre-screening of inliers helps mitigate the influence of outliers on the optimization process and provides a more accurate initial pose for TRO, enabling convergence to higher accuracy. This constitutes the comprehensive framework of our proposed method, as illustrated in Fig.~\ref{fig:method_overview}.
+
+\begin{figure*}[!htbp]
+	\centering	
+	\includegraphics[width=0.9\textwidth]{Fig2}
+	\caption{Overview of the proposed method and its main components. (a) The overall pipeline of the method. (b) Architecture of the EfficientViT Block. H$_i$ ($i$ from 1 to $n$) represents the $i$-th self-attention head, FFN represents the feed-forward network. (c) Structure of Triplet Attention. R$_{wc}$, R$_{cw}$, R$_{hc}$, R$_{ch}$ represent width-channel permutation, channel-width permutation, height-channel permutation, and channel-height permutation respectively, while Avg represents average pooling.}
+	\label{fig:method_overview}
+\end{figure*}
+
+\subsection{EfficientViT}
+
+EfficientViT \citep{liu2023efficientvit} represents an efficient vision Transformer \citep{dosovitskiy2020image} backbone network. Based on the ViT Block, as illustrated in Fig.~\ref{fig:method_overview}, it significantly enhances the performance and efficiency of ViT through a Sandwich Layout and Cascaded Group Attention (CGA). Specifically, EfficientViT first divides the input image into overlapping small patches and maps them into an embedding space. The features then sequentially pass through multiple EfficientViT Blocks, which include: (1) enhancing channel interactions through the Feed-Forward Network (FFN) module; (2) utilizing the CGA module to process features in different attention heads by groups and concatenating their outputs, thereby reducing computational redundancy and enhancing feature representation. Additionally, EfficientViT incorporates a subsample module between Blocks to progressively downsample the feature map while increasing the number of feature channels. Cascaded Group Attention (CGA) constitutes the core module of EfficientViT. For an input feature $\mathbf{X}_i$, CGA divides it equally into $h$ sub-features $\mathbf{X}_{ij}$, where $h$ represents the number of attention heads. For each sub-feature $\mathbf{X}_{ij}$, CGA employs independent Query-Key-Value (QKV) projection layers to compute self-attention:
+\begin{equation}
+	\tilde{\mathbf{X}}_{ij} = \operatorname{Attention}(\mathbf{X}_{ij}\mathbf{W}^Q_{ij}, \mathbf{X}_{ij}\mathbf{W}^K_{ij}, \mathbf{X}_{ij}\mathbf{W}^V_{ij}).
+\end{equation}
+where $\mathbf{W}^Q_{ij}$, $\mathbf{W}^K_{ij}$, $\mathbf{W}^V_{ij}$ represent the QKV projection matrices of the $j$-th head in the $i$-th block. Finally, CGA concatenates all $\tilde{\mathbf{X}}_{ij}$ and maps them back to the original dimension using a linear layer to produce the final output feature:
+\begin{equation}
+	\tilde{\mathbf{X}}_i = \operatorname{Concat}([\tilde{\mathbf{X}}_{i1}, \ldots, \tilde{\mathbf{X}}_{ih}])\mathbf{W}^P_i.
+\end{equation}
+where $\mathbf{W}^P_i$ denotes the output projection matrix of the $i$-th block. This structure conserves computational resources when processing high-dimensional features while maintaining the capability to handle information from different subspaces.
+
+\subsection{TANeck}
+The integration of TANeck (Triplet Attention Neck) into the YOLOv8-pose architecture is depicted in Fig.~\ref{fig:method_overview}, and it significantly enhances the network's capacity to manage information flow, particularly when addressing the complex feature landscapes of non-cooperative space targets. TANeck builds upon the Path Aggregation Network (PANet) \citep{panet}, introducing an innovative, bidirectional augmentation path with three-level feature flows. Unlike conventional Feature Pyramid Networks (FPNs) \citep{fpn} that rely on a top-down approach with lateral connections, PANet enriches the feature hierarchy by transmitting accurate localization signals bidirectionally between lower and upper layers. This bidirectional approach proves advantageous for preserving high-resolution details—essential when discerning the intricate features of space objects—and for diffusing rich semantic information throughout the feature hierarchy.
+
+Recognizing the importance of high-level features for comprehensive object understanding, particularly in occlusion scenarios where local features may prove inadequate, we have enhanced PANet's high-level feature flow with Triplet Attention \citep{triplet}. The extensive range of motion and distinctive geometries of non-cooperative space targets (such as elongated axes or broad solar arrays) present challenges for imaging, especially when portions of these spacecraft exceed the camera's field of view, resulting in partial target capture. This partial visibility can significantly diminish precision or even render estimation unfeasible. Attention mechanisms have emerged as effective techniques to address this issue, selectively focusing on certain features and enhancing relevant information while suppressing less important details. For incomplete targets, attention mechanisms leverage their intrinsic capabilities to process fragmented objects effectively.
+
+Conventional attention mechanisms such as SENet, BAM, and CBAM \citep{senet, cbam, bam} focus on enhancing channel-wise and spatial features to improve the representational capacity of neural networks but often incur increased parameter counts and limited flexibility in cross-dimensional information fusion. The Triplet Attention mechanism comprises three parallel branches, as illustrated in Fig.~\ref{fig:method_overview}, where the input feature map is divided into three tensors. Cross-dimensional interactions are facilitated by rotating the tensor through height (H) or width (W) dimensions in conjunction with the channel (C) dimension. The first branch facilitates interaction between the C and W dimensions, the second between C and H, and the third implements a conventional attention mechanism similar to BAM's approach. By computing and then fusing these three branches (followed by average pooling), Triplet Attention executes cross-dimensional interactions without requiring separate convolutional kernels for each channel, thereby substantially reducing the parameter count. Its Z-Pool mechanism,
+\begin{equation}
+Z\text{-pool}(x) = [\text{MaxPool}_{0d}(x), \text{AvgPool}_{0d}(x)].
+\end{equation}
+compresses the zeroth dimension from C to 2 by performing max and average pooling, which significantly reduces computational parameters. Essentially, the Triplet Attention mechanism achieves the effectiveness of traditional attention mechanisms while simultaneously facilitating cross-dimensional feature interactions, making it exceptionally well-suited for detecting non-cooperative space targets, particularly when they are only partially visible.
+
+The advanced TANeck structure integrated into YOLOv8-pose not only delivers superior performance in the challenging task of keypoint detection for non-cooperative space targets but also accomplishes this with minimal additional computational demand. This optimal balance between efficiency and accuracy underscores the YOLO architecture's enduring suitability for the demanding requirements of space-based applications.
+
+\subsection{Interplay of EfficientViT and TANeck}
+While EfficientViT contributes global context through its multi-head self-attention mechanism, TANeck amplifies crucial local details via its triplet attention mechanism in the high-level feature pathway. Specifically, the global dependencies captured by EfficientViT reduce ambiguity in keypoint detection for partially visible spacecraft, ensuring that the network can reason about the overall structure even when certain segments are occluded. TANeck complements this capability by selectively refining features at different scales, preserving important spatial cues that might otherwise be overshadowed in a purely Transformer-based design. This synergy proves particularly beneficial for large, elongated targets with repetitive textures or for situations where spacecraft geometry extends beyond the camera's field of view. By operating in concert, EfficientViT ensures robust representation of global object shape and orientation, while TANeck's triplet attention focuses on enhancing finer details crucial for accurate keypoint regression. Consequently, the combined architecture achieves a more balanced and comprehensive feature representation, significantly improving both rotational and translational estimation accuracy in challenging non-cooperative space scenarios.
+
+\subsection{Loss Function}
+
+\subsubsection{YOLO-pose OKS Loss Function}
+YOLO-pose extends the YOLOv5 architecture to human pose estimation by detecting keypoints on the human body \citep{yolo_pose}. This approach introduces a novel loss function known as the Object Keypoint Similarity (OKS) loss function, specifically designed for keypoint fitting. The formula for the OKS loss is as follows:
+\begin{equation}
+	\mathcal{L}_{kpts}(s, i, j, k) 
+    = 1 - \sum_{n=1}^{N_{kpts}} \mathrm{OKS} 
+    = 1 - \frac{\sum\limits_{n=1}^{N_{kpts}} \exp \left(-\frac{d_{n}^{2}}{2 s^{2} k_{n}^{2}}\right) \delta\left(v_{n} > 0\right)}{\sum\limits_{n=1}^{N_{kpts}} \delta\left(v_{n} > 0\right)}.
+\end{equation}
+where $s$ represents the scale of the target, typically expressed as the area of the bounding box, and $d_n$ denotes the pixel error of keypoints. This formulation balances the uneven error distribution between keypoints of large and small targets. It also incorporates custom weights $k_n$ to ensure that the overall error, after accounting for the scale $s$, remains below 1. The visibility factor $\delta(v_n)$ signifies the visibility status of keypoints. Due to targets potentially extending beyond image boundaries, estimating invisible keypoints presents challenges, and incorporating their loss could disrupt the prediction accuracy of visible keypoints. Including this visibility factor ensures precision in predicting visible keypoints, which benefits overall accuracy.
+
+However, when applied to space object keypoint detection, the OKS loss function exhibits certain limitations. The additional degrees of freedom in motion can result in various shapes being projected onto the 2D image plane. Fig.~\ref{fig:Obj_Proj1} illustrates the broad range of depths present in three-dimensional shapes. The depth disparity is particularly significant for points that are positioned in close proximity in these figures. Due to the properties of projection, small errors in 2D keypoints correspond to minor changes in the position of 3D points located closer to the camera. However, keypoints situated at greater depths are especially sensitive to errors in their 2D counterparts. The OKS loss function processes these discrepancies collectively without differentiating factors to account for such variations. Additionally, targets in different poses can produce substantially different bounding box areas, leading to imbalances and inconsistencies in the actual loss calculation during the estimation process.
+
+\begin{figure}[!htbp]
+	\centering
+	\includegraphics[width=1\textwidth]{Fig3} 
+	\caption{Variations in 2D projection area of Starlink spacecraft across different 6D poses.}
+	\label{fig:Obj_Proj1}
+\end{figure}
+
+\subsubsection{Pinhole Camera Model}
+The pinhole camera model represents a fundamental concept in computer vision, providing a simple yet effective mathematical framework to describe the process of projecting 3D points from the world onto a 2D image plane. At its core, the model postulates that all light rays pass through a single "pinhole" before striking the image plane, creating an inverted image. The key parameter in this model is the focal length $f$, which represents the distance between the pinhole (or lens) and the image plane. This relationship establishes the scale transformation from 3D to 2D, enabling reconstruction of the 3D scale from the 2D scale using this model.
+
+\subsubsection{A3DKS Loss Function}
+The assumption holds under the condition that the depth variance $\Delta Z$ around the plane of interest is small compared to the distance $Z$ from the camera to the object, expressed as $\Delta Z \ll Z$. Under this approximation, the error in back-projecting $p_1$ and $p_2$ onto their respective planes remains negligible, and the keypoint similarity measure is not significantly affected by the depth ambiguity inherent in the pinhole camera model for objects at a reasonable distance from the camera.
+
+The A3DKS (Approximate 3D Keypoint Similarity) function leverages the pinhole camera model and this approximation, as depicted in Fig.~\ref{fig:A3DKS_illustration}. In this model, point $p_1$ is back-projected onto a plane at point $P_1$ using the pinhole camera model, and similarly for point $p_2$ onto its respective plane. Both planes are assumed to be parallel to the camera plane, an approximation that simplifies the model. This assumption presumes that the likelihood of points being positioned in front of or behind the plane is approximately equal, a notion that can be substantiated mathematically. The same principle applies to point $P_2$, thus justifying the use of this approximation in the modeling process.
+
+\begin{figure}[!htbp]
+	\centering
+	\includegraphics[width=1.0\textwidth]{Fig4} 
+	\caption{Illustration where $p_1$ represents a 2D point on the image plane and $P_1$ is the corresponding 3D point. Similarly, $p_2$ and $P_2$ follow the same relationship.}
+	\label{fig:A3DKS_illustration}
+\end{figure}
+
+\begin{figure}[!htbp]
+	\centering
+	\includegraphics[width=0.8\linewidth]{Fig5}
+	\caption{Schematic representation of the pinhole camera model.}
+	\label{fig:pinhole}
+\end{figure}
+
+The derivation of the A3DKS loss function is grounded in the fundamental principles of the pinhole camera model, essential for projecting 3D objects onto a 2D plane. As illustrated in Fig.~\ref{fig:Obj_Proj1}, the pinhole camera model simplifies the projection process by translating the 3D coordinates of a point $P$ in space onto the camera sensor $C$, positioned at a distance $Z$ from the camera's origin $O$. The projected point $p$ on the sensor can be calculated using
+\begin{equation}
+p = \frac{f}{Z}(P - C),
+\end{equation}
+where $f$ is the focal length of the camera, $P$ represents the position of the point in 3D space, and $C$ denotes the center of projection of the sensor. By incorporating the depth $Z$ into the loss function, we can directly correlate the 2D keypoint displacement $d_n$ with its corresponding 3D position. This is achieved by scaling the displacement with the depth, resulting in a more accurate representation of keypoint errors.
+The A3DKS loss function is formulated as follows:
+\begin{equation}
+	L_{kpts}(i, j, k) 
+    = 1 - \frac{1}{N_{kpts}} \sum\limits_{n=1}^{N_{kpts}} \mathrm{A3DKS}
+    = 1 - \frac{\sum\limits_{n=1}^{N_{kpts}} \exp \left( -\left( \frac{d_n Z_n}{f} \right)^2 \cdot \frac{K}{2 s_h^2 k_n^2} \right) \delta(v_n > 0)}{\sum\limits_{n=1}^{N_{kpts}} \delta(v_n > 0)}.
+\end{equation}
+where the visibility factor $v_n$ ensures focus on visible keypoints, and the exponential function constrains loss values between 0 and 1. The depth $Z_n$ effectively scales the 2D displacement $d_n$ to its corresponding 3D magnitude, capturing the essence of the pinhole camera projection within the loss function. The inclusion of custom weights $k_n$ and the harmonic mean of area $s_h$ further refines the loss computation, making it more discriminative and balanced for keypoints at different depths. Similar to the scale factor, it can mitigate the differential treatment of keypoint loss caused by scale variations between samples. However, the differentiation of keypoints within the same sample—due to significant depth differences in various parts—can also promote a more balanced distribution of errors, which is advantageous for optimizing the RANSAC algorithm and preventing subsequent PnP estimates from converging to local optima.
+
+\subsubsection{RANSAC-TRO SQPnP}
+We propose RANSAC-TRO SQPnP to address the Perspective-n-Point (PnP) problem in scenarios with outliers and noise. This method comprises two primary steps:
+
+\begin{itemize}
+	\item \textbf{Step 1:} Obtain an initial 6D pose estimate using SQPnP (Sequential Quadratic Programming for PnP)\citep{terzakis2020consistently} with inlier points selected by RANSAC. SQPnP reformulates the PnP problem as a quadratic program and solves it through iterative optimization of quadratic subproblems.
+	\item \textbf{Step 2:} Refine the initial pose estimate using a Trust Region Optimization (TRO) method, which simultaneously optimizes both rotation (rvec) and translation (tvec) to minimize the reprojection error. This approach explores the parameter space more comprehensively, leading to potentially improved accuracy. TRO is particularly suitable for this refinement step because SQPnP has already converged the solution to near the optimal point, and TRO constrains the search within a trust region, ensuring more stable convergence.
+\end{itemize}
+
+Mathematically, the PnP problem is:
+\begin{equation}
+	\mathcal{E}^2 = \sum_{i=1}^{N} \left\lVert \mathbf{u}_i - \pi\left(\mathbf{K} \left[ \mathbf{R} \mathbf{P}_i + \mathbf{t} \right] \right) \right\rVert^2.
+\end{equation}
+where $\mathbf{u}_i$ is the observed image coordinate of the $i$-th point, $\mathbf{P}_i$ is its 3D coordinate, $\mathbf{K}$ is the camera intrinsic matrix, $\mathbf{R}$ is the rotation matrix derived from the rotation vector $\mathbf{r}$ using the Rodrigues transformation, $\mathbf{t}$ is the translation vector, and $\pi(\cdot)$ represents the perspective projection. The objective is to minimize this reprojection error by optimizing $\mathbf{r}$ and $\mathbf{t}$. 
+
+SQPnP reformulates this into a more tractable quadratic form:
+\begin{equation}
+	\underset{\mathbf{x} \in \mathbb{R}^{9}}{\operatorname{minimize}} \; \mathbf{x}^T \mathbf{\Omega} \mathbf{x} 
+	\quad \text{s.t.} \quad \mathbf{h}(\mathbf{x}) = \mathbf{0}_6.
+\end{equation}
+where $\mathbf{x} \in \mathbb{R}^9$ is the vector representation of the rotation matrix, and $\mathbf{h}(\mathbf{x}) = \mathbf{0}_6$ represents the constraints ensuring $\mathbf{x}$ corresponds to a valid rotation matrix. SQPnP employs a sequential quadratic programming approach, iteratively approximating the nonlinear constraints $\mathbf{h}(\mathbf{x}) = \mathbf{0}_6$ with linear constraints. At each iteration $k$, SQPnP solves:
+\begin{equation}
+	\begin{aligned}
+		\underset{\boldsymbol{\delta} \in \mathbb{R}^{9}}{\operatorname{minimize}} \quad & \boldsymbol{\delta}^T \mathbf{\Omega} \boldsymbol{\delta} + 2\mathbf{x}_k^T \mathbf{\Omega} \boldsymbol{\delta} \\
+		\text{subject to} \quad & \mathbf{H}_k \boldsymbol{\delta} = -\mathbf{h}(\mathbf{x}_k),
+	\end{aligned}.
+\end{equation}
+where $\mathbf{H}_k = \frac{\partial \mathbf{h}}{\partial \mathbf{x}}|_{\mathbf{x}=\mathbf{x}_k}$. However, SQPnP's optimization process only updates rotation parameters, while translation $\mathbf{t}$ is computed after rotation updates, creating a dependency that can limit exploration of the full parameter space.
+
+Therefore, we introduce the second step with TRO to optimize both rotation and translation simultaneously. This two-step method leverages RANSAC for robust inlier selection, SQPnP for efficient rotation parameter updating, and TRO for final global refinement.
+
+\begin{algorithm}
+	\caption{RANSAC-TRO SQPnP}
+	\begin{algorithmic}[1]
+		\REQUIRE $\mathbf{P}$: 3D points, $\mathbf{p}$: 2D points, $\mathbf{K}$: camera matrix, $n$: number of samples, $\tau$: threshold, $k_{\max}$: max iterations, $\epsilon_f$: function tolerance, $\epsilon_x$: parameter tolerance, $\epsilon_g$: gradient tolerance, $n_{\max}$: max function evaluations
+		\ENSURE $\mathbf{r}^*$: optimal rotation vector, $\mathbf{t}^*$: optimal translation vector, $\mathcal{I}^*$: best sample indices
+		\STATE $e^* \gets \texttt{MAX\_DOUBLE}$, $\mathcal{I}^* \gets \emptyset$
+		\FOR{$k = 1$ \TO $k_{\max}$}
+		\STATE $\mathcal{I}_k \gets \texttt{RandomSample}(n, |\mathbf{P}|)$
+		\STATE $\mathbf{P}_k \gets \mathbf{P}[\mathcal{I}_k]$, $\mathbf{p}_k \gets \mathbf{p}[\mathcal{I}_k]$
+		\STATE $\mathbf{r}_k, \mathbf{t}_k \gets \texttt{SQPnP}(\mathbf{P}_k, \mathbf{p}_k, \mathbf{K})$
+		\STATE $e_k \gets \texttt{ReprojectError}(\mathbf{P}[\mathcal{I}_k], \mathbf{p}[\mathcal{I}_k], \mathbf{K}, \mathbf{r}_k, \mathbf{t}_k)$
+		\IF{$e_k < e^*$}
+		\STATE $e^* \gets e_k$, $\mathcal{I}^* \gets \mathcal{I}_k$
+		\STATE $\mathbf{r}^*, \mathbf{t}^* \gets \mathbf{r}_k, \mathbf{t}_k$
+		\ENDIF
+		\ENDFOR
+		\STATE $\mathbf{P}^* \gets \mathbf{P}[\mathcal{I}^*]$, $\mathbf{p}^* \gets \mathbf{p}[\mathcal{I}^*]$
+		\STATE $\mathbf{x} \gets [\mathbf{r}^*, \mathbf{t}^*]$
+		\STATE $\mathbf{f} \gets \texttt{ReprojectError}(\mathbf{P}^*, \mathbf{p}^*, \mathbf{K}, \mathbf{x}[0], \mathbf{x}[1])$
+		\STATE $\mathbf{J} \gets \texttt{Jacobian}(\mathbf{P}^*, \mathbf{p}^*, \mathbf{K}, \mathbf{x}[0], \mathbf{x}[1])$
+		\STATE $n_f, n_J \gets 1, 1$, $\mathbf{g} \gets \mathbf{J}^\top \mathbf{f}$, $i \gets 0$, $s \gets \texttt{None}$
+		\WHILE{termination conditions not met}
+		\IF{$\|\mathbf{g}\|_\infty < \epsilon_g$}
+		\STATE $s \gets 1$
+		\STATE \textbf{break}
+		\ENDIF
+		\STATE $\mathbf{g}_h, \mathbf{J}_h, \mathbf{U}, \mathbf{s}, \mathbf{V}, \mathbf{u}_f \gets \texttt{ComputeAproximateproblem}(\mathbf{J}, \mathbf{f})$
+		\WHILE{$\rho \leq 0$ \AND $n_f < n_{\max}$}
+		\STATE $\boldsymbol{\delta}_h, \boldsymbol{\delta}, \mathbf{x}_{\text{new}}, \mathbf{f}_{\text{new}} \gets \texttt{ComputeStep}(\mathbf{g}_h, \mathbf{J}_h, \mathbf{U}, \mathbf{s}, \mathbf{V}, \mathbf{u}_f, \mathbf{x}, \Delta)$
+		\STATE $n_f \gets n_f + 1$
+		\IF{\NOT \texttt{IsFinite}($\mathbf{f}_{\text{new}}$)}
+		\STATE $\Delta \gets \Delta \cdot 0.5$
+		\STATE \textbf{continue}
+		\ENDIF
+		\STATE $\rho, \Delta_{\text{new}}, r, \|\boldsymbol{\delta}\| \gets \texttt{ComputeRatio}(\mathbf{f}, \mathbf{f}_{\text{new}}, \boldsymbol{\delta}_h, \Delta)$
+		\IF{termination conditions met}
+		\STATE \textbf{break}
+		\ENDIF
+		\STATE \texttt{Update}($\Delta$, $r$)
+		\ENDWHILE
+		\IF{$\rho > 0$}
+		\STATE $\mathbf{x}, \mathbf{f} \gets \mathbf{x}_{\text{new}}, \mathbf{f}_{\text{new}}$
+		\STATE $\mathbf{r}, \mathbf{t} \gets \mathbf{x}[0], \mathbf{x}[1]$
+		\STATE $\mathbf{J}, \mathbf{g} \gets \texttt{Jacobian}(\mathbf{P}^*, \mathbf{p}^*, \mathbf{K}, \mathbf{r}, \mathbf{t}), \mathbf{J}^\top \mathbf{f}$
+		\STATE $n_J \gets n_J + 1$
+		\ENDIF
+		\STATE $i \gets i + 1$
+		\ENDWHILE
+		\IF{$s$ is \texttt{None}}
+		\STATE $s \gets 0$
+		\ENDIF
+		\STATE $\mathbf{r}^*, \mathbf{t}^* \gets \mathbf{x}[0], \mathbf{x}[1]$
+		\RETURN $\mathbf{r}^*, \mathbf{t}^*$
+	\end{algorithmic}
+\end{algorithm}
+
+
+\section{Results and Discussion} \label{sec:experiments}
+
+\subsection{Comparison Indicator}
+
+To evaluate the performance of our method, the following metrics were selected: Angle error, Relative position error, SPEED and SPEED+ dataset score. These metrics are utilized to estimate accuracy.
+
+\subsubsection{Metrics Definitions}
+
+\begin{itemize}
+	\item $err_{\text{t}}$: The normalized relative error between the true and predicted position values, which represents the relative accuracy of the position estimation. This score is dimensionless and provides a scale-invariant measure of position error. Defined as:
+	\begin{equation}
+		err_{t,i} = \frac{\| r_{\text{true},i} - r_{\text{pred},i} \|_2}{\| r_{\text{true},i} \|_2}.
+	\end{equation}
+	
+	\begin{equation}
+		err_t = \frac{1}{N} \sum\limits_{i=1}^{N} err_{t,i}.
+	\end{equation}
+	
+	where $r_{\text{true},i}$ and $r_{\text{pred},i}$ are the true and predicted position vectors for the i-th sample respectively, and $N$ is the total number of samples.
+	
+	\item $err_{\text{T}}$: Measures the absolute position error between the true and predicted position values in meters (m). This error represents the Euclidean distance between the ground truth and model-predicted positions.
+	
+	% Absolute Position Error (err_T)
+	\begin{equation}
+		err_T = \frac{1}{N}\sum\limits_{i=1}^{N} \| r_{\text{true},i} - r_{\text{pred},i} \|_2.
+	\end{equation}
+	
+	where $r_{\text{true},i}$ and $r_{\text{pred},i}$ are the true and predicted position vectors for the i-th sample respectively, $N$ is the total number of samples.
+	
+	\item $err_{\text{ort}}^{\text{rad}}$: Measures the error in orientation by comparing the relative orientation of the predicted and true poses.
+	It is denoted by radians, emphasizing the benefits of relative metrics over absolute ones. Defined as:
+	\begin{equation}
+		err_{\text{ort, i}}^{\text{rad}} =  2 \cdot \arccos \left( \left| \langle q_{\text{pred},i}, q_{\text{true},i} \rangle \right| \right).
+	\end{equation}
+	
+	\begin{equation}
+		err_{\text{ort}}^{\text{rad}} = \frac{1}{N}\sum\limits_{i=1}^N err_{\text{ort, i}}^{\text{rad}}.
+	\end{equation}
+	
+	where $q_{\text{pred},i}$ and $q_{\text{true},i}$ are the predicted and true pose quaternions for the i-th sample respectively, $N$ is the total
+	number of samples, and $\langle \cdot, \cdot \rangle$ denotes the quaternion inner product.
+	
+	\item $err_{\text{ort}}^{\circ}$: It is $err_{\text{ort}}$ in degree format. Defined as:
+	\begin{equation}
+		err_{\text{ort, i}}^{\circ} =  \frac{180}{\pi}^{\circ} err_{\text{ort, i}}^{\text{rad}}.
+	\end{equation}
+	\begin{equation}
+		err_{\text{ort}}^{\circ} = \frac{1}{N}\sum\limits_i^N err_{\text{ort, i}}^{\circ}. 
+	\end{equation}
+	
+	\item $score_{\text{pst}}$: The position score for the SPEED dataset with lower value indicating higher accuracy. Defined as:
+	\begin{equation}
+		score_{\text{pst}} = err_{\text{t}}.
+	\end{equation}
+	
+	\item $score_{\text{ort}}$: The orientation score for the SPEED dataset with lower value indicating higher accuracy. Defined as:
+	\begin{equation}
+		score_{\text{ort}} = err_{\text{ort}}^{\text{rad}}.
+	\end{equation}
+	
+	\item $score$: The total score for the SPEED dataset. It integrates the results of orientation and position, serving as an overall score for 6D pose estimation. Defined as:
+	\begin{equation}
+		score = score_{\text{ort}} + score_{\text{pst}}.
+	\end{equation}
+	This combined score provides a single metric to assess overall performance, incorporating both position and orientation accuracy. Lower scores indicate higher accuracy.
+	
+	\item $score_{\text{pst}}^+$: The position score for the SPEED+ dataset. Defined as:
+	\begin{equation}
+		score_{\text{pst, i}}^+ = 
+		\begin{cases}
+			0, & \text{if } err_{\text{t, i}} < 0.002173 \\
+			err_{\text{t, i}}, & \text{otherwise}
+		\end{cases}.
+	\end{equation}
+	
+	\begin{equation}
+		score_{\text{pst}}^+ = \frac{1}{N}\sum\limits_{i=1}^N score_{\text{pst, i}}^+.
+	\end{equation}
+	
+	\item $score_{\text{ort}}^+$: The orientation score for the SPEED+ dataset. Defined as:
+	\begin{equation}
+		score_{\text{ort, i}}^+ = 
+		\begin{cases}
+			0, & \text{if } err_{\text{ort, i}}^{\circ} < 0.169^\circ \\
+			err_{\text{ort, i}}^{\text{rad}}, & \text{otherwise}
+		\end{cases}.
+	\end{equation}
+	\begin{equation}
+		score_{\text{ort}}^+ = \frac{1}{N}\sum\limits_{i=1}^N score_{\text{ort, i}}^+.
+	\end{equation}
+	\item $score^+$: A combined score proposed by SPEED+ dataset's official evaluation, based on the separate assessments of position and orientation, with lower value indicating higher accuracy. Defined as:
+	\begin{equation}
+		score^+ = \frac{1}{N}\sum\limits_{i=1}^N(score_{\text{ort, i}}^+ + score_{\text{pst, i}}^+)
+	\end{equation}.
+\end{itemize}
+
+\begin{figure*}[!htbp]
+	\centering
+	\includegraphics[width=1\textwidth]{Fig6} 
+\caption{Visualization of the ablation study results for the proposed EfficientViT on the SPEED+, Nauka~MLM, and Starlink datasets. 
+    Each group of images corresponds to one dataset: the first group is SPEED+, the second group is Nauka~MLM, and the third group is Starlink. 
+    In each group, the first row shows results obtained with the proposed EfficientViT backbone, while the second row shows results obtained with the YOLOv8 backbone. 
+    The white solid lines denote the ground-truth 3D bounding boxes and orientations; the white dashed lines denote the predicted 3D bounding boxes. 
+    The object coordinate axes are also shown for clarity, where the blue, green, and red arrows respectively indicate the $x$-, $y$-, and $z$-axes of the object. 
+    Solid lines/arrows represent the ground truth, and dashed lines/arrows represent the predictions. 
+    The green inset in each image displays the estimated position $(x,y,z)$ in meters and the orientation in Euler angles $(\mathrm{Roll}, \mathrm{Pitch}, \mathrm{Yaw})$ in degrees.}
+    \label{fig:effvit_ablation}
+	\label{fig:backbone_abliation}
+\end{figure*}
+
+\subsubsection{EfficientViT Ablation}
+We conducted an ablation experiment to compare EfficientViT with YOLOv8n-Pose's original backbone using three datasets and three metrics $score_{\text{pst}}^+$,  $score_{\text{ort}}^+$ and $score^+$ which denote roation, translation and total errors.The experimental data are presented in Table \ref{tab:EfficientViTAblation}. Our results indicate that while EfficientViT increases the parameter count by approximately 30\%, it also leads to significant improvements in accuracy across most datasets.
+For the Nauka MLM dataset, the accuracy of $score_{\text{pst}}^+$ increased by 18.60\%, $score_{\text{ort}}^+$ improved by 16.48\%, and $score^+$ saw an enhancement of 16.92\%. The improvements were even more pronounced for the Starlink dataset, with $score_{\text{pst}}^+$, $score_{\text{ort}}^+$, and $score^+$ increasing by 36.51\%, 24.60\%, and 28.78\%, respectively. The SPEED+ dataset demonstrated the most substantial improvements, with $score_{\text{pst}}^+$, $score_{\text{ort}}^+$, and $score^+$ increasing by 39.63\%, 39.68\%, and 39.67\%, respectively.
+
+While the majority of our samples demonstrated high estimation accuracy, we selected cases with more noticeable errors for visualization to better illustrate the ablation study's impact. As shown in Fig. \ref{fig:backbone_abliation}, the application of EfficientViT resulted in red predicted pose boxes and pose arrows that more closely align with the ground truth across all three datasets. In some samples, such as the fourth example from SPEED+, the YOLOv8 backbone exhibited a significant leftward rotational bias in 6D pose estimation. However, the EfficientViT backbone effectively mitigated this issue, achieving a pose estimation that closely matches the ground truth.
+The Starlink dataset, which initially showed numerous samples with notable translational and rotational offsets, demonstrated significant improvements after the introduction of EfficientViT. These results underscore the effectiveness of EfficientViT's Cascaded Group Attention mechanism in enhancing pose estimation accuracy.
+
+The SPEED+ dataset, in particular, showed the most pronounced improvements. This can be attributed to the dataset's unique challenges, which include not only diverse target pose variations but also Earth background interference. The traditional YOLOv8 backbone may struggle to focus on keypoint extraction in the target region due to these complexities. In contrast, our introduced EfficientViT, leveraging its self-attention mechanism, demonstrates an enhanced ability to concentrate on keypoint extraction in the target area, even in the presence of background interference.
+These findings highlight the robustness of EfficientViT in handling complex scenarios and its potential to significantly improve the accuracy of 6D pose estimation for non-cooperative space objects.
+\begin{table}[!htbp]
+    \centering
+    \caption{EfficientViT Ablation on SPEED+, Nauka MLM, Starlink synthetic datasets}
+    \label{tab:EfficientViTAblation}
+    \setlength{\tabcolsep}{4mm}{
+        % 原来是 {cccccc}，现在多了一列，因此改为 {ccccccc}
+        \begin{tabular}{ccccccc}
+            \toprule
+            Dataset & Backbone & Param(M) & $Score^+_{pst}$ & $Score^+_{ort}$ & $Score^+$ \\
+            \midrule
+            \multirow{2}{*}{SPEED+} 
+                & EfficientViT & 4.2544 & \textbf{0.0099} & \textbf{0.0228} & \textbf{0.0327} \\
+                & YOLOv8     & 3.2539 & 0.0164 & 0.0378 & 0.0542 \\
+            \midrule
+            \multirow{2}{*}{Nauka MLM} 
+                & EfficientViT & 4.2959 & \textbf{0.0105} & \textbf{0.0228} & \textbf{0.0334} \\
+                & YOLOv8     & 3.2955 & 0.0129 & 0.0273 & 0.0402 \\
+            \midrule
+            \multirow{2}{*}{Starlink} 
+                & EfficientViT & 4.1960 & \textbf{0.0153} & \textbf{0.0337} & \textbf{0.0490} \\
+                & YOLOv8     & 3.1956 & 0.0241 & 0.0447 & 0.0688 \\
+            \bottomrule
+        \end{tabular}
+    }% End of resizebox
+\end{table}
+
+\subsubsection{Ablation under Varying Illumination}
+Considering that Vision Transformers (ViTs) naturally excel at capturing more global features and are less dependent on fine-grained details, we additionally rendered both bright and dark Starlink pose images for further experimentation. The ablation results under these varying illumination conditions are shown in Table~\ref{tab:EfficientViT Abliation_light}.
+
+
+
+As shown in Fig.~\ref{fig:bright_scene_comp}, a backbone abliation of pose estimation results under bright conditions. Similarly, the results under dark conditions are visualized in Fig.~\ref{fig:dark_scene_comp}. In both scenarios, the predicted 6D poses from EfficientViT (in red) align more closely with the ground truth than those from YOLOv8, demonstrating EfficientViT’s superior robustness to varying illumination.
+
+
+
+
+
+
+\begin{table}[!htbp]
+    \centering
+    \caption{EfficientViT Ablation on SPEED+, Nauka MLM, Starlink synthetic datasets under Different Light Intensities}
+    \label{tab:EfficientViT Abliation_light}
+    \setlength{\tabcolsep}{6.5mm}{
+        \begin{tabular}{ccccc}
+            \toprule
+            Dataset & Backbone & $Score^+_{pst}$ & $Score^+_{ort}$ & $Score^+$ \\
+            \midrule
+            \multirow{2}{*}{Bright Scene}
+            & EfficientViT & \textbf{0.1015} & \textbf{0.5452} & \textbf{0.6467} \\
+            & YOLOv8 & 0.1693 & 0.7631 & 0.9324 \\
+            \midrule
+            \multirow{2}{*}{Dark Scene}
+            & EfficientViT & \textbf{0.0256} & \textbf{0.1822} & \textbf{0.2078} \\
+            & YOLOv8 & 0.0616 & 0.2165 & 0.2781 \\
+            \bottomrule
+        \end{tabular}
+    }
+\end{table}
+
+
+\begin{figure}[!htbp]
+    \centering
+    \includegraphics[width=1.0\textwidth]{Fig12}
+    \caption{Visualization of the ablation study results for the proposed EfficientViT on the Starlink bright scene datasets. 
+    Each group of images corresponds to one dataset: the first group is SPEED+, the second group is Nauka~MLM, and the third group is Starlink. 
+    In each group, the first row shows results obtained with the proposed EfficientViT backbone, while the second row shows results obtained with the YOLOv8 backbone. 
+    The white solid lines denote the ground-truth 3D bounding boxes and orientations; the white dashed lines denote the predicted 3D bounding boxes. 
+    The object coordinate axes are also shown for clarity, where the blue, green, and red arrows respectively indicate the $x$-, $y$-, and $z$-axes of the object. 
+    Solid lines/arrows represent the ground truth, and dashed lines/arrows represent the predictions. 
+    The green inset in each image displays the estimated position $(x,y,z)$ in meters and the orientation in Euler angles $(\mathrm{Roll}, \mathrm{Pitch}, \mathrm{Yaw})$ in degrees.}
+    \label{fig:bright_scene_comp}
+\end{figure}
+
+\begin{figure}[!htbp]
+    \centering
+    \includegraphics[width=1.0\textwidth]{Fig13}
+    \caption{Visualization of the ablation study results for the proposed EfficientViT on the Starlink dark scene datasets. 
+    Each group of images corresponds to one dataset: the first group is SPEED+, the second group is Nauka~MLM, and the third group is Starlink. 
+    In each group, the first row shows results obtained with the proposed EfficientViT backbone, while the second row shows results obtained with the YOLOv8 backbone. 
+    The white solid lines denote the ground-truth 3D bounding boxes and orientations; the white dashed lines denote the predicted 3D bounding boxes. 
+    The object coordinate axes are also shown for clarity, where the blue, green, and red arrows respectively indicate the $x$-, $y$-, and $z$-axes of the object. 
+    Solid lines/arrows represent the ground truth, and dashed lines/arrows represent the predictions. 
+    The green inset in each image displays the estimated position $(x,y,z)$ in meters and the orientation in Euler angles $(\mathrm{Roll}, \mathrm{Pitch}, \mathrm{Yaw})$ in degrees.}
+    \label{fig:dark_scene_comp}
+\end{figure}
+
+
+\subsubsection{TANeck Ablation}
+We conducted an ablation study of TANeck on YOLOv8n-pose, similar to the EfficientViT ablation experiment, using the same three datasets. The results are listed in Table~\ref{tab:TANeck_abliation}. After applying TANeck, significant improvements were observed across all metrics. For SPEED+, $score_{\text{pst}}^+$, $score_{\text{ort}}^+$, and $score^+$ improved by 17.07\%, 10.85\%, and 12.55\% respectively. For Nauka MLM, these metrics improved by 15.50\%, 12.45\%, and 13.43\%, while Starlink showed even more substantial improvements of 36.93\%, 27.74\%, and 30.95\%. Notably, the improvement in translation estimation accuracy consistently outperformed that of rotation estimation, validating the effectiveness of TANeck's introduction of a high-level feature pathway in the neck.
+
+As illustrated in Fig.~\ref{fig:TANeck_abliation}, the estimation results with TANeck generally align more closely with the ground truth. Occlusion scenarios are more prevalent in the Nauka MLM and Starlink datasets. For instance, in the third comparison image of Nauka MLM, the lower half of the spacecraft's solar panels and part of the cabin are occluded. In this situation, YOLOv8's estimated pose box shows significant deviation from the ground truth, but with the introduction of TANeck, this deviation is notably reduced.The most pronounced accuracy improvements are observed in the Starlink dataset, correlating with the higher frequency of occlusions in its samples. Additionally, the Starlink target features extensive solar panel areas with repetitive grid-like local textures. The orignial YOLOv8, lacking a specialized enhancement for high-level feature extraction, struggles with these patterns. This limitation makes it susceptible to anomalous local keypoint detection when global information is partially lost due to occlusions.
+
+By incorporating Triplet Attention into YOLOv8's neck for fine-grained enhancement of high level features, we strenghthn its capability in global feature representation.This improvement allows for better focus on incomplete global features even in occluded scenarios, thereby more effectively addressing samples with both occlusions and repetitive local textures. The result is a significant enhancement in predictive capability for these challenging cases.
+\
+
+% This table requires the multirow package: \usepackage{multirow}
+% This table uses resizebox, which requires \usepackage{graphicx}
+\begin{table}[!htbp]
+	\centering
+	\caption{TANeck Ablation on SPEED+, Nauka MLM, Starlink synthetic datasets.}
+	\label{tab:TANeck_abliation}
+	\setlength{\tabcolsep}{6.5mm}{
+		\begin{tabular}{ccccc}
+        \toprule
+        Dataset & Neck & $Score^+_{pst}$ & $Score^+_{ort}$ & $Score^+$ \\
+        \midrule
+        \multirow{2}{*}{SPEED+} & TANeck & \textbf{0.0136} & \textbf{0.0337} & \textbf{0.0474} \\
+        & YOLOv8 & 0.0164 & 0.0378 & 0.0542 \\
+        \midrule
+        \multirow{2}{*}{Nauka MLM} & TANeck & \textbf{0.0109} & \textbf{0.0239} & \textbf{0.0348} \\
+        & YOLOv8 & 0.0129 & 0.0273 & 0.0402 \\
+        \midrule
+        \multirow{2}{*}{Starlink} & TANeck & \textbf{0.0152} & \textbf{0.0323} & \textbf{0.0475} \\
+        & YOLOv8 & 0.0241 & 0.0447 & 0.0688 \\
+        \bottomrule
+    \end{tabular}
+    }% End of resizebox
+\end{table}
+\begin{figure}[!htbp]
+	\centering	\includegraphics[width=1\textwidth]{Fig7.pdf} 
+		\caption{
+        Visualization of the ablation study results for the proposed TANeck on the SPEED+, Nauka~MLM, and Starlink datasets. 
+    Each group of images corresponds to one dataset: the first group is SPEED+, the second group is Nauka~MLM, and the third group is Starlink. 
+    In each group, the first row shows results obtained with the proposed TANeck, while the second row shows results obtained with the YOLOv8 neck. 
+    The white solid lines denote the ground-truth 3D bounding boxes and orientations; the white dashed lines denote the predicted 3D bounding boxes. 
+    The object coordinate axes are also shown for clarity, where the blue, green, and red arrows respectively indicate the $x$-, $y$-, and $z$-axes of the object. 
+    Solid lines/arrows represent the ground truth, and dashed lines/arrows represent the predictions. 
+    The green inset in each image displays the estimated position $(x,y,z)$ in meters and the orientation in Euler angles $(\mathrm{Roll}, \mathrm{Pitch}, \mathrm{Yaw})$ in degrees.
+}
+	\label{fig:TANeck_abliation}
+\end{figure}
+
+
+\subsubsection{A3DKS Ablation} \label{A3DKS_Ablation_subsection}
+We validated the effectiveness of the A3DKS loss function by comparing it with the OKS loss function used in YOLOv8-pose. The results are listed in Table~\ref{tab:OKSvsA3DKS}. The application of A3DKS improved the $score_{\text{ort}}^+$ across all datasets. Notably, Nauka MLM and Starlink showed more significant improvements in $score_{\text{ort}}^+$, reaching 32.97\% and 21.70\% respectively, compared to SPEED+'s 10.58\%. This aligns with our observations in Fig.~\ref{fig:Obj_Proj1}, where Starlink and Nauka MLM tend towards more elongated objects compared to SPEED+ targets. These elongated objects are prone to significant variations in their 2D perspective projections, even when their positions remain constant but their poses change.
+
+As illustrated in Fig.~\ref{fig:A3DKS}, these elongated targets are susceptible to varying degrees of 3D scale offsets due to errors at different points, which is characteristic of their elongated shape, especially when their maximum diameter is oriented along the depth direction (z-axis). By analyzing the rotational accuracy metric $score_{\text{ort}}^+$ and the positional accuracy metric $score_{\text{pst}}^+$, we observe an improvement in rotational estimation accuracy but a slight decline in positional accuracy. Specifically, SPEED+ shows a 9.76\% decrease in $score_{\text{pst}}^+$, while Nauka MLM and Starlink exhibit decreases of 6.20\% and 1.24\%, respectively.
+
+From a theoretical perspective, OKS utilizes the target's projected area as one of the normalization factors for keypoint loss, treating each point equally. In contrast, A3DKS approximates 2D points to a 3D scale, resulting in deeper points being assigned greater weights. Consequently, during training, points with larger Z values (deeper points) have higher loss sensitivity.This leads the model to prioritize accurate prediction of deeper points, potentially at the expense of shallower points (those with smaller Z values). As a result, positions at deeper point clusters tend to be more accurate, while positions at nearer point clusters may have larger errors. Given that shallower points are typically distributed at one end and deeper points at the other, the position in the pose optimized by minimizing reprojection error tends to be closer to the deeper points. As shown in Fig~\ref{fig:Obj_Proj1}, for elongated targets like Nauka MLM and Starlink, especially when their maximum diameter is oriented along the depth direction, A3DKS demonstrates significantly smaller errors compared to YOLOv8's OKS. The demo images in the figure were specifically selected to showcase scenarios where the object's maximum diameter is oriented along the depth direction. Particularly for Nauka MLM, as evident in the third comparison, the estimation under OKS can be considered erroneous, while A3DKS yields a relatively correct estimation. Although errors are still noticeable, the improvement is substantial.
+
+Regarding rotational errors, deeper points are more sensitive to subtle changes in rotational parameters, leading to increased variations in reprojection errors. Therefore, higher accuracy in deeper points contributes to more accurate estimation of rotational parameters, which is reflected in the improved $score_{\text{ort}}^+$ across all datasets.This analysis explains the observed improvements in rotational accuracy and the varying effects on positional accuracy across different datasets, particularly highlighting the method's effectiveness for elongated objects when their longest diameter is oriented along the depth direction, as exemplified by the Nauka MLM and Starlink datasets.
+
+
+
+\begin{table}[!htbp]
+ \centering
+    \caption{OKS Loss vs A3DKS Loss on SPEED+, Nauka MLM and Starlink synthetic datasets.}
+    \label{tab:OKSvsA3DKS}
+    \setlength{\tabcolsep}{6mm}{
+    \begin{tabular}{ccccc}
+        \toprule
+        Dataset & Loss Type & $Score^+_{pst}$ & $Score^+_{ort}$ & $Score^+$ \\
+        \midrule
+        \multirow{2}{*}{SPEED+} & A3DKS & 0.0180 & \textbf{0.0338} & \textbf{0.0518} \\
+        & OKS & \textbf{0.0164} & 0.0378 & 0.0542 \\
+        \midrule
+        \multirow{2}{*}{Nauka MLM} & A3DKS & 0.0137 & \textbf{0.0183} & \textbf{0.0320} \\
+        & OKS & \textbf{0.0129} & 0.0273 & 0.0402 \\
+        \midrule
+        \multirow{2}{*}{Starlink} & A3DKS & 0.0244 & \textbf{0.0350} & \textbf{0.0594} \\
+        & OKS & \textbf{0.0241} & 0.0447 & 0.0688 \\
+        \bottomrule
+    \end{tabular}
+    }% End of resizebox
+\end{table}
+\begin{figure*}[!t]
+    \centering
+    \includegraphics[width=1\textwidth]{Fig8} 
+    \caption{
+            Visualization of the ablation study results for the proposed A3DKS on the SPEED+, Nauka~MLM, and Starlink datasets.
+    Each group of images corresponds to one dataset: the first group is SPEED+, the second group is Nauka MLM, and the third group is Starlink. 
+    In each group, the first row shows results obtained with the proposed A3DKS, while the second row shows results obtained with the OKS. 
+    The white solid lines denote the ground-truth 3D bounding boxes and orientations; the white dashed lines denote the predicted 3D bounding boxes. 
+    The object coordinate axes are also shown for clarity, where the blue, green, and red arrows respectively indicate the $x$-, $y$-, and $z$-axes of the object. 
+    Solid lines/arrows represent the ground truth, and dashed lines/arrows represent the predictions. 
+    The green inset in each image displays the estimated position $(x,y,z)$ in meters and the orientation in Euler angles $(\mathrm{Roll}, \mathrm{Pitch}, \mathrm{Yaw})$ in degrees.
+    }
+    \label{fig:A3DKS}
+\end{figure*}
+
+\begin{figure*}[!t]
+	\centering
+	\includegraphics[width=1\textwidth]{Fig9} 
+	\caption{These are easy demo of SPEED+ synthetic images estimation results visualization. The green is the ground truth while the red is the prediction result. The first two rows are keypoints estimation results and the last two rows are pose estimation results.}
+	\label{fig:easydemo}
+\end{figure*}
+
+\begin{figure*}[!t]
+	\centering
+	\includegraphics[width=1\textwidth]{Fig10} 
+	\caption{These are hard demo of SPEED+ synthetic images estimation results visualization. The green is the ground truth while the red is the prediction result. The first two rows are keypoints estimation results and the last two rows are pose estimation results.}
+	\label{fig:harddemo}
+\end{figure*}
+
+\subsection{PnP Comparison}
+We evaluated our model against several common PnP methods. Most researchers use EPnP and RANSAC for solving PnP problems, with some also employing EPnP with LM for optimization. We conducted evaluations with these methods as well, as shown in Table \ref{tab:PnPCmp}.Comparing EPnP and SQPnP, we observed that SQPnP significantly outperforms EPnP across all three metrics. When combining RANSAC with SQPnP, the accuracy improvement is notably more substantial than combining SQPnP with either LM or TRO. This demonstrates that the removal of outliers is crucial for enhancing accuracy. Optimizing based on a point set containing outliers and its resulting initial pose yields less improvement compared to RANSAC.
+
+Building upon RANSAC-SQPnP, we further validated the effectiveness of subsequent optimization using the inlier set identified by RANSAC and the initial pose computed by SQPnP on these inliers. We compared the performance of LM and TRO for this subsequent optimization. As evident from Table \ref{tab:PnPCmp}, RANSAC-LM SQPnP shows a slight improvement in the $score_{\text{ort}}^+$ metric compared to RANSAC-SQPnP. However, it exhibits a minor decline in the $score_{\text{pst}}^+$ metric, resulting in an overall decrease in the $score^+$ metric. This indicates that using the LM optimization algorithm actually reduces the overall accuracy compared to not using it.In contrast, our proposed RANSAC-TRO SQPnP method shows a marginal decrease in the $score_{\text{ort}}^+$ metric, but achieves a notable improvement in the $score_{\text{pst}}^+$ metric. The overall $score^+$ metric also demonstrates a significant enhancement. Table \ref{tab:PnPCmp} illustrates that this method achieves optimal performance in both $score_{\text{pst}}^+$ and $score^+$ metrics.
+
+Considering the increased position error resulting from the A3DKS loss, as indicated in the A3DKS ablation experiment, our RANSAC-TRO SQPnP method effectively mitigates this positional accuracy decline to a certain extent.
+
+\begin{table*}[!htbp]
+	\centering
+	\caption{PnP Comparison on SPEED+ synthetic dataset.}
+	\setlength{\tabcolsep}{4.7mm}{
+		\begin{tabular}{lccc}
+			\toprule
+			Method & $score_{\text{ort}}^+$ & $score_{\text{pst}}^+$ & $score^+$  \\
+			\midrule
+			EPnP \citep{EPnP} & 0.02539 & 0.01356 & 0.03896 \\
+			SQPnP \citep{terzakis2020consistently} & 0.02227 & 0.01247  & 0.03474 \\
+			RANSAC SQPnP & 0.01877 & 0.00860  & 0.02737 \\
+			LM \citep{lm} SQPnP & 0.02227 & 0.01446 & 0.03673 \\
+			RANSAC-LM SQPnP & \textbf{0.01875} & 0.00865 & 0.02739 \\
+			TRO \citep{trf} SQPnP & 0.02227 & 0.01251  & 0.03478 \\
+			Ours(RANSAC-TRO SQPnP) & 0.01878 & \textbf{0.00850} & \textbf{0.02728} \\
+			\bottomrule
+	\end{tabular}}
+	\label{tab:PnPCmp}
+\end{table*}
+
+\subsection{Estimation Result Visualization}
+We specifically selected some representative samples from the SPEED+ and SPEED datasets to visualize our final results.The estimation result is demonstrated by keypoints and bbox with axes arrows. The green demonstrates the ground truth while the red demonstrates the prediction. In synthetic datasets, we first visualize easy demo prediction results. In The prediction essentially coincides with the ground truth, as shown in Fig.~\ref{fig:easydemo}. Harder cases, where some surfaces are difficult to discern and occlusions are more pronounced, are presented in Fig.~\ref{fig:harddemo}. Nevertheless, the estimated results closely approximate the ground truth. This demonstrates the robustness of our method.The SPEED dataset also provides photographs of real Tango satellites without pose annotations. The estimation results on these real images are shown in Fig.~\ref{fig:realdemo}. While the accuracy is not as high as that observed with synthetic data, the results still offer valuable insights. This indicates a certain capacity for transferring our method from synthetic to real-world scenarios.
+
+\begin{figure*}[htbp]
+	\centering
+	\includegraphics[width=1\textwidth]{Fig11} 
+	\caption{Real Demo 6D estimation results of SPEED real images by our proposed approach}
+	\label{fig:realdemo}
+\end{figure*}
+
+\subsection{Comparison with Other Methods}
+To further evaluate the proposed method, a comparison with other methods was conducted on the SPEED and SPEED+ datasets as shown in Table \ref{tab:SPEED_Comparison} and Table \ref{tab:SPEEDplus_Comparison}.
+
+\subsubsection{SPEED}
+Considering there are many methods evaluated on SPEED in Table~\ref{tab:SPEED_Comparison}, we first assess our method on SPEED for a more comprehensive comparison. These methods are evaluated using $err_{\text{T}}$, $err_{\text{ort}}^{\circ}$, and the parameter count (Param(M)), which is derived from either the original paper or details on the network architecture. 
+
+Our method (small) outperforms some other approaches (e.g., \citet{chen2019satellite, piazza2021deep}), even though they have significantly larger parameter counts, as shown in Table~\ref{tab:SPEED_Comparison}. While it may not surpass all methods, its low parameter count greatly enhances its efficiency. With $err_{\text{T}} = 0.1043$ and $err_{\text{ort}}^{\circ} = 1.4076$, the accuracy remains relatively acceptable, making deployment on power- and resource-constrained satellite hardware feasible. 
+For our medium and large variants, there is a notable improvement in angular error. However, compared to our small variant, the translational error exhibits a slight drop in performance. Our large model is superior to most other methods in terms of angular error, but our medium model appears to suffer from overfitting, likely due to the limited dataset size (over 10,000 images). This overfitting issue is resolved in the SPEED+ dataset, which includes over 40,000 images to train our larger model
+
+\begin{table*}[htbp]
+	\centering
+	\caption{Comparative Performance of 6D Spacecraft Pose Estimation Methods on the SPEED synthetic Dataset}
+	\label{tab:SPEED_Comparison}
+	\setlength{\tabcolsep}{7.5mm}{
+		\begin{tabular}{cccc}
+			\toprule
+			Method &$err_{\text{T}}$ & $err_{\text{ort}}^{\circ}$ & Param(M) \\
+			\midrule
+                \citep{sharma2019pose}    & 0.7832 & 8.4254 & - \\
+			\citep{chen2019satellite} & \textbf{0.0320} & \textbf{0.4100} & $\sim$49.8 \\
+                \citep{9197244} & 0.1450 & 2.4900 & $\sim$11.4 - $\sim$42.8\\
+			\citep{gerard2019segmentation} & 0.0730 & 0.9100 & $\sim$59.1 \\
+			\citep{lotti2022investigating} & 0.0340 & 0.5200 & 15.4 \\
+			\citep{wang2022revisiting} & 0.0391 & 0.6638 & $\sim$47.8 \\
+			\citep{park2019towards} & 0.2090 & 2.6200 & 11.17 \\
+			\citep{piazza2021deep} & 0.1036 & 2.2400 & $\sim$36.1 \\
+			\citep{huan2020pose} & 0.1823 & 2.8723 & $\sim$63.6 \\
+			Ours small & 0.1043 & 1.4076 & \textbf{4.3} \\
+                Ours medium & 0.1618 & 1.0050 & 18.7 \\
+                Ours large & 0.1144 & 0.8767 & 47.2 \\
+			\bottomrule
+	\end{tabular}}
+\end{table*}
+
+\begin{table*}[htbp]
+    \centering
+    \caption{Comparative Performance of 6D Spacecraft Pose Estimation Methods on the SPEED+ synthetic Dataset}
+    \label{tab:SPEEDplus_Comparison}
+    \setlength{\tabcolsep}{0.5mm}{
+        \begin{tabular}{lcccccc}
+            \toprule
+            Method & Param (M) & FLOPs(G) & $err_{\text{ort}}^{\circ}$ & $score_{\text{ort}}^+$ & $err_{\text{T}}$ & $score^+$ \\
+            \midrule
+            SPN\citep{sharma2019pose} & - & - & 7.7700 & - & 0.1600 & 0.1600 \\
+            KRN\citep{park2019towards} & - & - & 3.6900 & - & 0.1400 & 0.0900 \\
+            HigherHRNet \citep{higherhrnet} & $\sim 28.6\text{–}63.8$ & $\sim 74.9\text{–}154.3$ & 1.5100 & - & 0.0500 & 0.0400 \\
+            P\'erez-Villar et al. \citep{perez2022spacecraft} & 190.1 & 487.8 & 1.4700 & 0.0256 & - & 0.0355 \\
+            SPNv2($\phi$=3 GN) \citep{park2024robust} & 12.0 & 29.2 & 1.2240 & 0.0214 & 0.0560 & 0.0310 \\
+            SPNv2($\phi$=6 GN) \citep{park2024robust} & 52.5 & 148.5 & 0.8850 & 0.0154 & \textbf{0.0310} & 0.0210 \\
+            YOLOv8n-pose & \textbf{3.2} & \textbf{9.1} & 2.1662 & 0.0378 & 0.0857 & 0.0542 \\
+            YOLOv8s-pose & 11.6 & 30.2 & 1.5764 & 0.0275 & 0.0524 & 0.0395 \\
+            Ours small & 4.3 & 10.4 & 1.0760 & 0.0188 & 0.0459 & 0.0273 \\
+            Ours medium & 18.7 & 53.5 & 0.8078 & 0.0141 & 0.0533 & 0.0231 \\
+            Ours large & 47.2 & 145.5 & \textbf{0.6750} & \textbf{0.0118} & 0.0418 & \textbf{0.0189} \\
+            \bottomrule
+        \end{tabular}
+    }
+\end{table*}
+
+
+
+\subsubsection{SPEED+}
+We also evaluated our methods on the latest datasets: SPEED+ as shown in Table \ref{tab:SPEEDplus_Comparison}. On SPEED+ synthetic datasets, Our method shows significant improvements compared with the our method's base model YOLOv8n-pose and the larger one YOLOv8s-pose. For the small model proposed by us, the $score_{\text{ort}}^+$ indicated that the error of rotation decreased by 51\%, $err_{\text{T}}$ indicated that error of the absolute postion error decreased by 46\% and the $score^+$ indicated that the total error decreased by 50\%.Except for the first two baseline methods, larger models were evaluated. Directly regressing keypoints is generally considered less accurate than using heatmaps. However, our approach achieved much higher accuracy than HigherHRNet with fewer parameters. For larger models, our smaller model did not perform as well as SPNv2, which has 52.5 million parameters. When we increased our model's scale to medium and large, our largest model demonstrated the lowest $score_{\text{ort}}^+$. Although the $score_{\text{ort}}^+$ was higher than that of SPNv2 (52.5M) in Table ~\ref{tab:SPEEDplus_Comparison}, the total indicator $score_{\text{ort}}^+$ is the best. This fully demonstrates the superiority of our method.
+
+
+
+
+\subsection{Discussion}
+In this paper, we conduct an in-depth study on 6D pose estimation of non-cooperative space objects. 
+The proposed method utilizes the multi-head self-attention mechanism of EfficientViT 
+to effectively handle complex scenarios with varying target poses and background interference, 
+significantly improving pose estimation accuracy. Additionally, the high-level feature paths 
+of the TANeck module consistently enhance translation estimation accuracy across datasets, 
+supporting the hypothesis that high-level global feature representations can improve the 
+attitude estimation of partially visible objects. Most importantly, the proposed A3DKS loss 
+function improves rotation accuracy across datasets. The effectiveness of A3DKS varies with 
+object size, showing the most significant enhancements for larger objects. Finally, we use 
+the RANSAC-TRO SQPnP method to further refine the 6D pose parameters and improve the accuracy 
+of the translation error of the 6D pose.
+
+Nevertheless, there are still some future issues to be considered. The first concerns higher 
+quality generalisation of synthetic data to the real world: our approach was validated using 
+primarily synthetic datasets. While this provides valuable insights for initial evaluation, 
+performance on real-world samples may vary. Particularly in terms of visualisation, we found 
+that results on real samples were less satisfactory than on synthetic data. This highlights 
+the challenges of generalising from the synthetic domain to the real domain and points to an 
+important issue that needs to be addressed in future research. 
+
+
+Additionally, a \textit{Kalman filter-based real-time feedback mechanism} may further enhance 
+our method’s performance by continually merging new sensor measurements with previous pose 
+estimates. In highly dynamic on-orbit scenarios—characterized by sudden occlusions or 
+lighting changes—this incremental filtering approach can stabilize pose tracking by effectively 
+weighting prior information against newly acquired data. Since non-cooperative targets offer 
+no direct interaction cues, leveraging a Kalman filter allows the estimator to incorporate 
+uncertainty models for both motion and measurement, improving resilience under unforeseen 
+disturbances. Future work should thus consider implementing or refining such a Kalman 
+filter pipeline to facilitate incremental pose updates in real time, while maintaining 
+computational efficiency.
+
+
+While A3DKS significantly boosts rotational accuracy, ensuring robust translation precision remains 
+critical in certain scenarios. One viable solution is to combine A3DKS with a more uniform keypoint 
+approach, for example via a hybrid formulation:
+\begin{equation}
+        \mathcal{L}_{\text{hybrid}} 
+    = \alpha \cdot \mathcal{L}_{\text{A3DKS}} 
+    + (1-\alpha)\cdot \mathcal{L}_{\text{OKS}}.
+\end{equation}
+where $\alpha$ modulates the emphasis on depth-sensitive errors versus uniform scaling. Alternatively, 
+adding an $\ell_1$ or Huber loss term for each keypoint’s 2D coordinate can help preserve translation 
+accuracy near the camera. In practice, selecting $\alpha$ or these auxiliary terms through 
+cross-validation often provides an optimal balance for specific mission objectives.Beyond static mixtures of losses, adaptive or staged strategies can further stabilize training. In particular, adjusting the weight of A3DKS based on the size or depth variance of the spacecraft can be advantageous: larger or elongated targets, such as Nauka MLM or Starlink, may benefit more from stronger depth cues, whereas smaller objects might require a more uniform treatment. A curriculum learning approach is also possible, starting with a simpler keypoint loss (e.g., OKS) to focus on translation fidelity, then gradually introducing A3DKS for enhanced rotational accuracy. Such staged adaptation can be monitored via validation metrics to guard against local minima and ensure an 
+effective trade-off between rotation and translation performance.
+
+
+
+In addition, extending our framework to other challenging environments (e.g., 
+underwater, search-and-rescue, or agricultural fields) could require more sophisticated 
+domain adaptation techniques, multi-sensor fusion approaches, and real-time embedded 
+implementations to ensure both accuracy and efficiency under extreme conditions. 
+By pursuing these directions, we anticipate bridging synthetic-to-real gaps more effectively 
+and broadening the scope of our approach beyond space applications.
+
+\section{Conclusion} \label{sec:conclusion}
+\textcolor{blue}{
+This study presents a framework for 6D pose estimation of non-cooperative space objects. It integrates an EfficientViT backbone for feature extraction, a Triplet Attention Neck (TANeck) for enhanced fine-grained feature representation, an A3DKS loss function to better handle large 3D variations, and a RANSAC-TRO SQPnP algorithm for robust pose solving.
+On both the SPEED and SPEED+ datasets, the proposed method achieves high pose accuracy while using significantly fewer parameters than competing methods. Our largest model attains the best performance on SPEED+ in Table~\ref{tab:SPEED_Comparison}. These results demonstrate the viability of lightweight architectures for space object pose estimation, even though bridging the synthetic-to-real performance gap and balancing rotational and positional accuracy continue to pose significant challenges.
+Future work will address these challenges by improving real-world adaptability via unsupervised domain adaptation and by refining the loss function design to better balance rotational and positional accuracy. We also plan to incorporate temporal filtering to stabilize pose estimates in dynamic scenarios. We anticipate that these efforts will open new possibilities for space applications such as satellite servicing, orbital debris removal, and autonomous on-orbit operations, where both computational efficiency and robust performance are crucial.
+}
+\section*{Declaration of competing interest}
+
+The authors declare that they have no known competing financial interests or personal relationships that could have appeared to influence the work reported in this paper.
+
+\section*{Data availability}
+
+No data was used for the research described in the article. 
+
+\printcredits
+
+\bibliographystyle{cas-model2-names}
+
+% Loading bibliography database
+\bibliography{cas-refs}
+
+\bio{yang}
+Hao Yang is currently a graduate student in Control Science and Engineering at Northeast Normal University, Changchun, China. His research focuses on Pattern Recognition and Intelligent Systems. His primary research interest lies in 6D pose estimation and deep learning.
+\endbio
+
+\vskip6pc
+
+\bio{huang}
+Jipeng Huang received the Ph.D. degree from the Changchun Institute of Optics, Fine Mechanics and Physics, Chinese Academy of Sciences, Changchun, China, in 2012. He is a Professor at the School of Physics, Northeast Normal University. His research interests include the development of photoelectric detection instruments, biophysics, and digital image processing.
+
+\endbio
+
+
+\vskip6pc
+
+\bio{ren}
+Hong Ren received the B.S. and M.S. degrees from Nanjing University of Science and Technology in 2012 and 2015, respectively, and Ph.D. degrees in Mechanical and Electronic Engineering from the Changchun Institute of Optics, Fine Mechanics and Physics, Chinese Academy of Sciences, in 2023. His research interests include image processing, computer vision, pattern recognition, and visual metrology.
+
+\endbio
+
+
+\vskip6pc
+
+\bio{sun}
+Haichao Sun received the M.S. degree in
+control science and engineering from the Harbin
+Institute of Technology, Harbin, China, in 2012.
+He is currently pursuing the Ph.D. degree with
+the Changchun Institute of Optics, Fine Mechan-
+ics and Physics, Chinese Academy of Sciences,
+Changchun, China. His research interests include
+aerospace communications and image processing.
+
+\endbio
+
+\vskip6pc
+\bio{tian}
+Rui Tian received the B.S. degree in applied
+physics from Jilin University, Changchun, China,
+in 2002, and the Ph.D. degree in optical engi-
+neering from the Changchun Institute of Optics,
+Fine Mechanics and Physics, Chinese Academy of
+Sciences, Changchun, China, 2010. His research
+interest includes real-time image processing.
+
+\endbio
+
+\end{document}
+
