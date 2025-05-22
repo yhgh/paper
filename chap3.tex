@@ -1,17 +1,3 @@
-如图~\ref{fig:keypoint_detection_neural_network}(a) 所示，本文将 EfficientViT 引入 YOLOv8-Pose 的骨干网络，以增强模型对全局特征的关注度。这样，当目标截断、光照剧变等因素导致局部特征无法有效利用时，模型能够更多地依赖全局特征，从而更好地适应空间非合作目标的复杂环境。EfficientViT\cite{liu2023efficientvit}是一种针对视觉 Transformer (Vision Transformer, ViT) 的高效架构，以显著降低计算和存储开销。其核心是在网络中引入新的基础模块 EfficientViT 块，如图~\ref{fig:keypoint_detection_neural_network} (b) 所示，每个模块采用三明治式布局（Sandwich Layout）结构，结合级联组注意力（Cascaded Group Attention, CGA）机制，并辅以参数重分配策略，实现网络的轻量化设计。整个 EfficientViT 网络将上述高效模块堆叠成多阶段结构：首先通过重叠式块嵌入将输入图像划分为若干 patch 并嵌入初始令牌序列，然后分三个阶段逐步对特征图进行降采样，同时逐层提高通道维度和注意力头数。每个阶段由若干个 EfficientViT 模块组成（后续阶段的模块数多于前期，以补偿特征图尺寸的降低），在阶段之间插入 EfficientViT 降采样块以减少分辨率并防止信息损失。EfficientViT 在架构上用批归一化（BatchNorm）取代了传统 Transformer 中的层归一化（Layer Norm），并使用 ReLU 激活函数代替 GELU，以便更好地适配高效推理。通过以上设计，EfficientViT 网络在保持或提升准确率的同时，大幅减少了参数量和计算量，兼顾了精度与效率。如图~\ref{fig:keypoint_detection_neural_network} (b) 所示：Sandwich Layout 结构采用了夹层式的 Transformer 结构，以提高内存访问效率并强化通道信息交流。具体来说，在该模块中仅保留一次多头自注意力（Multi-Head Self-Attention,  MHSA）计算，并在其之前和之后分别堆叠多个前馈网络（Feed-Forward Network，FFN）层，相当于用 FFN "夹住"少量注意力层。从数学公式上，可将第 $i$ 个模块的变换表示为：
-\begin{equation}\label{eq:sandwich}
-	\mathbf{X}_{i+1} = \Phi^F_i\Big(\Phi^A_i\big(\Phi^F_i(\mathbf{X}_i)\big)\Big)\,
-\end{equation}
-
-其中 $\Phi^A_i$ 表示第 $i$ 个模块中的自注意力变换，$\Phi^F_i$ 表示前馈网络变换（包含非线性激活和逐元素加法的两层感知机，膨胀比例适当缩小以减小参数冗余），$\mathbf{X}_i$ 和 $\mathbf{X}_{i+1}$ 分别是模块输入和输出特征。与传统 Transformer 块每层都执行一次注意力不同，Sandwich 布局大幅减少了记忆开销高的全局注意力计算次数，将注意力"稀释"到更少的层中。这种设计显著降低了由于多头注意力读写大规模特征图所带来的内存访问延迟，并通过增加 FFN 层数来保持网络的表达能力和通道通信效率。在 Sandwich 结构的作用下，EfficientViT 模块用更多的参数高效的 FFN 计算取代了大部分注意力计算，使网络在内存和计算开销上更为高效。
-
-对于 CGA 机制，在标准视觉 Transformer 的多头自注意力中，不同注意力头往往学到相似的注意力图，存在计算冗余。CGA 针对此问题对注意力计算方式进行重构，大幅提升计算效率和多样性。其核心思想是将输入特征按通道维度均分为 $h$ 个子组，每个子特征组仅供对应的注意力头计算。这样，每个注意力头只关注输入的一部分通道信息，从而避免了以往每个头都对全通道特征重复计算的浪费。形式上，对于第 $i$ 个模块、划分后的第 $j$ 个特征子组 $\mathbf{X}_{ij}$（$j=1,2,\dots,h$），CGA 的计算过程可用数学公式描述为：
-\begin{equation}\label{eq:cga1}
-	\mathbf{X}^{e}_{i,j} = \text{Attn}\!\Big(\mathbf{X}_{ij}W^{Q}_{ij},\; \mathbf{X}_{ij}W^{K}_{ij},\; \mathbf{X}_{ij}W^{V}_{ij}\Big)
-\end{equation}
-\begin{equation}
-	\mathbf{X}^{e}_{i+1} = \text{Concat}\big[\mathbf{X}^{e}_{i,1}, \mathbf{X}^{e}_{i,2}, \dots, \mathbf{X}^{e}_{i,h}\big] \, W^P_i\
-\end{equation}
 其中 $\text{Attn}(Q,K,V)$ 表示标准的自注意力计算，$W^Q_{ij},W^K_{ij},W^V_{ij}$ 为第 $i$ 个模块中第 $j$ 个头的查询、键、值投影矩阵，$W^P_i$ 为输出投影矩阵，将所有头的输出特征串联后映射回原始维度。上述分组方案类似于卷积中的组卷积思想：由于每个头只处理$\frac{1}{h}$的通道，其 Q/K/V 投影的参数量和矩阵乘法计算量也相应减少到原来的 $\frac{1}{h}$，从而理论上令注意力模块在参数和算力开销上缩减近 $h$ 倍。单纯分组虽减少了开销，但可能因每个头仅看局部通道而降低网络表示能力。为此，CGA 进一步引入级联机制来弥补信息交流：将前一注意力头的输出逐步传递并融合到下一头的输入中。用公式表示，即对于 $1<j\le h$，令
 \begin{equation}\label{eq:cga2}
 	\mathbf{X}'_{i,j} = \mathbf{X}_{ij} + \mathbf{X}^{e}_{i,\,j-1}\,
