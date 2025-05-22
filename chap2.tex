@@ -1,1 +1,524 @@
-xxxxxx
+\chapter{理论基础}
+\label{chap:theory}
+
+在本章中，将详细介绍与本文研究密切相关的理论基础。首先阐述 6D 姿态的概念及常见表示方法，相机模型，重投影误差。然后，介绍了注意力机制在计算机视觉中的应用，包括基于 CNN 特征图再加权的注意力机制，以及基于 Transformer 的全局自注意力方法。在此基础上，进一步介绍 YOLO 系列算法及其在关键点检测中的衍生应用、PnP 问题等方法，最后介绍了卡尔曼滤波的基本原理。通过对这些理论的阐述，为后续章节中关键点检测网络的设计、6D 姿态解算方法的实现以及 6D 姿态滤波方案的应用奠定理论基础。
+
+\section{6D姿态的概念}
+
+6D 姿态即6自由度姿态，包含姿态（3个自由度）与位置（3个自由度）两个方面，总计6个自由度，所以被称为 6D 姿态，由于包含位置和姿态，也可以简称位姿。对一个目标进行 6D 姿态估计的任务所要完成的就是估计这个目标在参考系中，相对于基准位置的旋转参数和平移参数。在许多实际应用中（如航天、机器人、增强现实等领域）\cite{Zuo_2024_CVPR,aerospace11070526,NGUYEN2024103459,choi2025robust}，6D 姿态被广泛应用，成为描述目标在三维空间中几何状态的关键参数。因此衡量 6D 姿态的姿态参数可以称为旋转参数，而衡量位置的参数可以成为位置参数。对于 6D 姿态，位置的通常由一个平移向量$(x, y, z)$表示，对于姿态，其表示形式多样。接下来将介绍 6D 姿态的各种表示形式。
+
+\subsection{姿态的表示方法}
+姿态其实是相对于定义的基准姿态而言，从基准姿态到当前姿态的变化过程就涉及旋转。这个旋转可以分解为三个步骤，
+欧拉角（yaw，pich，roll）通过将总体旋转分解为绕三个固定轴（或物体自身轴）的连续旋转来描述刚体方向。假设采用常用的 ZYX 顺序，即先绕 $z$ 轴旋转 $\psi$（偏航角），再绕 $y$ 轴旋转 $\theta$（俯仰角），最后绕 $x$ 轴旋转 $\phi$（滚转角）。对应的旋转矩阵 $R$ 可写为
+\begin{equation}
+	R = R_x(\phi) \, R_y(\theta) \, R_z(\psi)
+\end{equation}
+其中
+\begin{equation}
+	R_x(\phi) = \begin{pmatrix}
+		1 & 0 & 0 \\
+		0 & \cos\phi & -\sin\phi \\
+		0 & \sin\phi & \cos\phi
+	\end{pmatrix}
+\end{equation}
+\begin{equation}
+	R_y(\theta) = \begin{pmatrix}
+		\cos\theta & 0 & \sin\theta \\
+		0 & 1 & 0 \\
+		-\sin\theta & 0 & \cos\theta
+	\end{pmatrix}
+\end{equation}
+\begin{equation}
+	R_z(\psi) = \begin{pmatrix}
+		\cos\psi & -\sin\psi & 0 \\
+		\sin\psi & \cos\psi & 0 \\
+		0 & 0 & 1
+	\end{pmatrix}
+\end{equation}
+
+这种方法直观易懂，但存在表示不唯一的问题，并且当 $\theta = \pm \frac{\pi}{2}$ 时会出现万向节死锁现象，从而影响数值计算的稳定。
+
+
+轴–角表示方法直接利用旋转轴和旋转角度来描述刚体旋转。设旋转轴为单位向量 
+\begin{equation}
+\mathbf{n} = \begin{pmatrix} n_x \\ n_y \\ n_z \end{pmatrix}
+\end{equation}
+和旋转角度 $\theta$，则根据 Rodrigues 公式，旋转矩阵可表示为
+\begin{equation}
+	R = I \cos\theta + (1-\cos\theta)\, \mathbf{n}\mathbf{n}^T + \sin\theta \, [\mathbf{n}]_\times
+\end{equation}
+其中 $I$ 为 $3\times 3$ 单位矩阵，$[\mathbf{n}]_\times$ 为 $\mathbf{n}$ 的反对称矩阵。
+\begin{equation}
+	[\mathbf{n}]_\times = \begin{pmatrix}
+		0 & -n_z & n_y \\
+		n_z & 0 & -n_x \\
+		-n_y & n_x & 0
+	\end{pmatrix}
+\end{equation}
+轴–角表示法没有旋转顺序的依赖，因而避免了万向节死锁问题，但在旋转插值和数值优化中，常需转换为其他表示形式处理。
+
+
+
+四元数是一种利用4个数字紧凑表示三维旋转的方法。一个单位四元数写作
+\begin{equation}
+	\mathbf(q) = \begin{pmatrix} q_0 \\ q_1 \\ q_2 \\ q_3 \end{pmatrix}
+\end{equation}
+且必须满足归一化条件
+\begin{equation}
+	q_0^2 + q_1^2 + q_2^2 + q_3^2 = 1
+\end{equation}
+当使用轴–角表示时，其与四元数之间的转换关系为
+\begin{equation}
+	q_0 = \cos\frac{\theta}{2}, \quad \begin{pmatrix} q_1 \\ q_2 \\ q_3 \end{pmatrix} = \sin\frac{\theta}{2}\, \mathbf{n}
+\end{equation}
+由四元数转换得到旋转矩阵的公式为
+\begin{equation}
+	R = \begin{pmatrix}
+		1-2(q_2^2+q_3^2) & 2(q_1q_2 - q_0q_3) & 2(q_0q_2+q_1q_3) \\
+		2(q_1q_2+q_0q_3) & 1-2(q_1^2+q_3^2) & 2(q_2q_3 - q_0q_1) \\
+		2(q_1q_3 - q_0q_2) & 2(q_0q_1+q_2q_3) & 1-2(q_1^2+q_2^2)
+	\end{pmatrix}
+\end{equation}
+同时，若以 ZYX 顺序将四元数转换为欧拉角，其公式为
+\begin{equation}
+	\phi = \arctan2\bigl(2(q_0q_1+q_2q_3),\, 1-2(q_1^2+q_2^2)\bigr)
+\end{equation}
+\begin{equation}
+	\theta = \arcsin\bigl(2(q_0q_2-q_3q_1)\bigr)
+\end{equation}
+\begin{equation}
+	\psi = \arctan2\bigl(2(q_0q_3+q_1q_2),\, 1-2(q_2^2+q_3^2)\bigr)
+\end{equation}
+需要特别说明的是，虽然使用四元数表示旋转时涉及4个数，但归一化条件限制了它们的自由度为3，与其他旋转表示方法一致。再加上3个平移自由度，构成整体的6D姿态参数。
+
+\subsection{齐次变换}
+
+有时为了方便计算，需要对6D姿态在统一的框架下进行运算，这就需要用到其次变换。同时描述物体的位置和平移，可以采用齐次变换矩阵同一描述，将旋转矩阵 $R$ 与平移向量 $\mathbf{t}$ 结合，其形式为
+\begin{equation}
+	H = \begin{pmatrix}
+		R & \mathbf{t} \\
+		\mathbf{0}^T & 1
+	\end{pmatrix} =
+	\begin{pmatrix}
+		r_{11} & r_{12} & r_{13} & x \\
+		r_{21} & r_{22} & r_{23} & y \\
+		r_{31} & r_{32} & r_{33} & z \\
+		0      & 0      & 0      & 1
+	\end{pmatrix}
+\end{equation}
+其中 $\mathbf{t} = \begin{pmatrix} x \\ y \\ z \end{pmatrix}$ 表示目标在三维空间中的位置，而 $R$ 则描述目标的旋转状态。
+
+总之，本文介绍的各旋转表示方法虽然形式不同，参数的个数也不同，但是由于旋转矩阵与四元数存在额外的约束，使得其自由度为3，与平移向量的3个自由度相加，总计6个自由度，所以称之为6D姿态。
+
+
+
+\section{相机模型}
+针孔模型将三维点经由透视投影映射到二维图像平面。其过程可以概括为外参变换，归一化投影，畸变校正，像素化四个步骤。
+
+\subsection{三维点到归一化平面}
+设世界坐标系中的三维点为
+\(
+\mathbf{P}_w=(X,Y,Z)^\mathsf{T}
+\)，相机位姿由旋转矩阵 $\mathbf{R}\in\mathrm{SO}(3)$ 与平移向量 $\mathbf{t}\in\mathbb{R}^3$ 表征。点首先变换到相机坐标系
+\begin{equation}
+	\mathbf{P}_c
+	=\begin{bmatrix}X_c\\Y_c\\Z_c\end{bmatrix}
+	=\mathbf{R}\mathbf{P}_w+\mathbf{t}
+\end{equation}
+随后经针孔投影得到归一化坐标
+\begin{equation}
+	x=\frac{X_c}{Z_c},\qquad
+	y=\frac{Y_c}{Z_c}
+	\label{eq:normalized_xy}
+\end{equation}
+
+\subsection{镜头畸变模型}
+实际镜头往往表现出径向与切向两类畸变。记径向距离
+\(
+r^2 = x^2 + y^2
+\)。
+径向畸变主要随半径增长而累积，其校正模型为
+\begin{equation}
+	\begin{aligned}
+		x_{d} &= x\bigl(1+k_1r^2+k_2r^4+k_3r^6\bigr)\\[2pt]
+		y_{d} &= y\bigl(1+k_1r^2+k_2r^4+k_3r^6\bigr)
+	\end{aligned}
+\end{equation}
+其中 $k_1,k_2,k_3$ 为径向畸变系数。
+切向畸变源于镜头组件的装配偏心或倾斜，其校正可写作
+\begin{equation}
+	\begin{aligned}
+		x_{d} &= x + 2p_1xy + p_2\bigl(r^2 + 2x^2\bigr)\\[2pt]
+		y_{d} &= y + p_1\bigl(r^2 + 2y^2\bigr) + 2p_2xy
+	\end{aligned}
+\end{equation}
+其中 $p_1,p_2$ 为切向畸变系数。
+当两类畸变同时存在时，畸变校正后的无量纲坐标为
+\begin{equation}
+	\begin{aligned}
+		x_{d} &= x\Bigl(1+k_1r^2+k_2r^4+k_3r^6\Bigr)
+		+ 2p_1xy + p_2\bigl(r^2 + 2x^2\bigr)\\[2pt]
+		y_{d} &= y\Bigl(1+k_1r^2+k_2r^4+k_3r^6\Bigr)
+		+ p_1\bigl(r^2 + 2y^2\bigr) + 2p_2xy
+	\end{aligned}
+	\label{eq:comprehensive_distortion}
+\end{equation}
+图~\ref{fig:distortion_patterns} 展示了无畸变、仅径向畸变的典型扭曲形态。径向畸变导致图像沿半径方向整体膨胀或收缩，而切向畸变则引入局部倾斜或剪切。
+
+\begin{figure}[htbp]
+	\centering
+	\includegraphics[width=0.8\textwidth]{Img/distortion.png}
+	\caption{畸变示意图}
+	\label{fig:distortion_patterns}
+\end{figure}
+\subsection{映射到像素平面}
+相机内参矩阵定义为
+\begin{equation}
+	\mathbf{K} =
+	\begin{bmatrix}
+		f_x & s   & c_x\\
+		0   & f_y & c_y\\
+		0   & 0   & 1
+	\end{bmatrix}
+\end{equation}
+其中 $f_x,f_y$ 为像素单位焦距，$c_x,c_y$ 为主点坐标，$s$ 为轴间斜率（通常 $s\approx0$）。畸变校正后的点映射到像素坐标 $(u,v)$：
+\begin{equation}
+	\begin{bmatrix}
+		u\\v\\1
+	\end{bmatrix}
+	=
+	\mathbf{K}
+	\begin{bmatrix}
+		x_{d}\\y_{d}\\1
+	\end{bmatrix}
+	\label{eq:pixel_projection}
+\end{equation}
+
+
+
+
+\section{重投影误差}
+给定$n$对匹配的三维关键点$\{\mathbf{X}_i\}_{i=1}^n$和二维图像点$\{\mathbf{p}_i\}_{i=1}^n$，其中$\mathbf{X}_i \in \mathbb{R}^3$为目标坐标系中的三维坐标，$\mathbf{p}_i = [u_i,\;v_i]^\mathsf{T}\in\mathbb{R}^2$为图像平面上的像素坐标。若相机姿态由旋转矩阵$\mathbf{R}$和平移向量$\mathbf{t}$给出，则对第$i$个三维点$\mathbf{X}_i$的投影可分为以下几步：
+
+\begin{enumerate}
+	\item 将三维点从目标坐标系变换到相机坐标系：
+	\begin{equation}
+		\mathbf{X}_i^{\mathrm{cam}} = \mathbf{R}\,\mathbf{X}_i + \mathbf{t}
+	\end{equation}
+	\item 在相机坐标系中进行透视投影，得到归一化平面坐标$(x_i, y_i)$：
+	\begin{equation}
+		x_i = \frac{X_{i}^{\mathrm{cam}}}{Z_{i}^{\mathrm{cam}}}, \quad
+		y_i = \frac{Y_{i}^{\mathrm{cam}}}{Z_{i}^{\mathrm{cam}}}
+	\end{equation}
+	\item 考虑镜头畸变（包括径向畸变与切向畸变），对$(x_i, y_i)$进行校正得到$(x_{d_i}, y_{d_i})$，具体参见下文畸变模型。
+	\item 通过相机内参矩阵$\mathbf{K}$将校正后的归一化坐标映射到像素坐标$(\hat{u}_i, \hat{v}_i)$：
+	\begin{equation}
+		\begin{bmatrix}
+			\hat{u}_i \\[3pt]
+			\hat{v}_i \\[3pt]
+			1 
+		\end{bmatrix}
+		=
+		\mathbf{K}
+		\begin{bmatrix}
+			x_{d_i} \\[3pt]
+			y_{d_i} \\[3pt]
+			1
+		\end{bmatrix}
+	\end{equation}
+\end{enumerate}
+
+记投影坐标为$\hat{\mathbf{p}}_i = [\hat{u}_i,\;\hat{v}_i]^\mathsf{T}$。重投影误差通常定义为所有关键点投影偏差的均方和，可表示为
+\begin{equation}
+	E_{\mathrm{reproj}}(\mathbf{R}, \mathbf{t})
+	\;=\;
+	\frac{1}{n}
+	\sum_{i=1}^n 
+	\Bigl\|
+	\hat{\mathbf{p}}_i - \mathbf{p}_i
+	\Bigr\|^2
+	\label{eq:reprojErrDef}
+\end{equation}
+在6D姿态优化中，往往通过最小化上述重投影误差，以使估计到的相机姿态尽可能地与真实观测数据吻合。
+
+\section{注意力机制}
+\label{sec:attention_mechanism}
+\subsection{基于CNN特征域再加权注意力机制}
+此类注意力机制通常以卷积特征图为基础，通过显式加权通道或空间维度来提升特征表达的鲁棒性和区分度，从而更好地捕捉细粒度特征。其中，通道注意力主要通过学习通道级别的权重来突出关键信息、抑制冗余特征，典型方法包括 SENet(Squeeze-and-Excitation Networks)\cite{senet}，其利用全局平均池化与全连接层生成通道权重，显著提升了图像分类等任务的性能，ECA-Net(Efficient Channel Attention)\cite{eca-net}则通过一维卷积替代全连接层，减少参数量并提高效率。而空间注意力则关注特征在空间维度上的分布，对特征图中的关键区域进行加权，强调有价值的空间位置。典型的实现方式如BAM（Bottleneck Attention Module）\cite{bam}在残差网络等结构中增加额外分支以学习空间注意力权重，从而提升图像分类与检测性能。CBAM（Convolutional Block Attention Module）\cite{cbam}，通过通道与空间注意力的双重加权进一步增强模型的空间特征表达能力。总之，这些注意力机制在不同维度上对特征进行细致地甄别和加权，有助于模型提取更具判别力的细粒度特征。
+\subsection{基于Transformer 的注意力机制}
+\label{sec:transformer_attn}
+在传统的 CNN 注意力机制中，特征的上下文建模往往依赖局部感受野来逐层累积远距离信息，难以高效捕获跨越较大空间范围的依赖关系。与之相比，Transformer 结构\cite{vaswani2017}基于序列建模并以自注意力为核心，可以直接对序列各位置之间的全局交互进行建模。自从视觉Vision Transformer\cite{dosovitskiy2020image} 提出后，通过将图像划分为若干 Patch 并以序列形式输入 Transformer 编码器的方式，为视觉任务提供了新的解决思路。
+
+如图~\ref{fig:transformer_arch}所示，基于 Transformer 的图像处理流程通常包含若干关键环节。首先，将输入影像（例如遥感影像）均匀分割为若干 Patch，并对每个 Patch 进行线性投影或小型卷积嵌入，将其映射到固定维度的向量表示，形成一系列 Patch Token。由于 Transformer 自注意力结构本身并不具备位置信息，因此需要对这些 Token 显式添加可学习或固定的位置信息编码，这样才能在后续处理时保留图像的空间结构。然后，将包含位置信息的 Patch Token 序列输入由多层 Transformer 块堆叠而成的编码器进行特征提取。每个 Transformer 块通常包括多头自注意力、前馈网络、残差连接和层归一化等模块，从而实现对序列中任意两个位置间信息的直接交互。相较于依靠局部卷积逐层扩展感受野的方法，这种全局自注意力机制能够高效建模图像中远距离 Patch 之间的依赖关系。编码器输出的 Token 序列可进一步进入下游任务模块（如分类、检测或分割头），最终完成目标应用的预测或推断。
+
+在 Transformer 中，自注意力可表示为对查询（Query）、键（Key）与值（Value）的加权操作。令输入序列的向量集合为 $\mathbf{X}\in \mathbb{R}^{N \times d}$，其中 $N$ 表示序列长度（即 Patch Token 数量），$d$ 表示单个向量的维度。通过可学习的线性变换得到查询矩阵 $\mathbf{Q}$、键矩阵 $\mathbf{K}$ 和值矩阵 $\mathbf{V}$：
+
+\begin{equation}
+	\mathbf{Q} = \mathbf{X} \mathbf{W}^Q,\quad
+	\mathbf{K} = \mathbf{X} \mathbf{W}^K,\quad
+	\mathbf{V} = \mathbf{X} \mathbf{W}^V
+\end{equation}
+其中 $\mathbf{W}^Q,\ \mathbf{W}^K,\ \mathbf{W}^V\in \mathbb{R}^{d \times d_k}$ 为可学习的参数。自注意力的输出 $\mathrm{Attention}(\mathbf{Q}, \mathbf{K}, \mathbf{V})$ 定义为：
+
+\begin{equation}
+	\mathrm{Attention}(\mathbf{Q}, \mathbf{K}, \mathbf{V})
+	= \mathrm{softmax}\Bigl(\frac{\mathbf{Q}\mathbf{K}^\top}{\sqrt{d_k}}\Bigr)\mathbf{V}
+\end{equation}
+通过上述操作，序列中的任何一个位置都可以与其他所有位置进行直接信息交互，从而捕捉全局依赖。
+
+
+在实际实现中，常使用多头注意力（Multi-Head Attention）来提升表示能力。它将输入分别投影到多个子空间上并进行并行的自注意力计算，最后将结果拼接后再投影回原始维度：
+
+\begin{equation}
+	\mathrm{MultiHead}(\mathbf{Q}, \mathbf{K}, \mathbf{V})
+	= \mathrm{Concat}\Bigl(\mathrm{head}_1, \ldots, \mathrm{head}_h\Bigr)\mathbf{W}^O
+\end{equation}
+其中第 $i$ 个注意力头 $\mathrm{head}_i$ 计算如下：
+
+\begin{equation}
+	\mathrm{head}_i
+	= \mathrm{Attention}\Bigl(\mathbf{Q}\mathbf{W}^Q_i,
+	\mathbf{K}\mathbf{W}^K_i,
+	\mathbf{V}\mathbf{W}^V_i\Bigr)
+\end{equation}
+
+
+每个 Transformer 块除了多头自注意力之外，还包含一个逐位置（Position-wise）前馈网络（Feed-Forward Network, FFN）：
+
+\begin{equation}
+	\mathrm{FFN}(\mathbf{x}) = \max(0, \mathbf{x}\mathbf{W}_1 + \mathbf{b}_1)\mathbf{W}_2 + \mathbf{b}_2
+\end{equation}
+该网络会对每个 Token 向量独立地进行非线性映射，从而增强特征表达能力。与基于卷积的注意力方法相比，Transformer 通过全局自注意力的方式突破了 CNN 主要依赖局部特征的限制，不仅更易捕捉长程依赖，也能在大规模数据上实现更具泛化性的特征学习。在高分辨率、目标尺度多样的视觉场景（例如遥感影像、医学图像等）中，基于 Transformer 的建模方式往往展现出更强的适应性和鲁棒性。随着硬件计算与训练算法的不断发展，越来越多的变体的Transformer结构的出现\cite{sun2023mobilevit,Zhang_2023_CVPR,Chen2024addvit}，为视觉任务的研究与应用提供了更丰富的思路和更广阔的空间。针对Transformer计算复杂度过高的问题也有对Transformer轻量化相关的研究，比如EfficientViT\cite{liu2023efficientvit}，这个网络也是本文所采用的骨干网络的核心部分。
+
+\begin{figure}[!htb]
+	\centering
+	\includegraphics[width=1.0\textwidth]{Img/vitillustration.png}
+	\caption{Transformer 的结构图示意图}
+	\label{fig:transformer_arch}
+\end{figure}
+
+
+\section{YOLO 系列算法}
+\label{sec:yolo_keypoint}
+
+YOLO 系列算法是近些年目标检测领域最具代表性的单阶段检测器之一，以其实时性高、端到端的优点而被广泛应用 \cite{yolo2016you,yolov3}。其核心思路是将输入图像一次性地通过卷积网络特征提取，并在网络输出层直接回归目标的边界框和类别概率，从而实现高效的检测过程。
+
+随着研究的深入，YOLO 系列版本不断迭代，从 YOLOv2\cite{yolov2}， YOLOv3\cite{yolov3}等到最新的 YOLOv8\cite{yolov8_ultralytics}。其结构演化为骨干网络、颈部网络以及检测头的模式，以适应日常以及工业中的场景，同时考虑了模型精度和效率的平衡。
+
+除了一般的目标检测，YOLO 系列也逐步衍生出在同一网络中同时完成关键点检测的能力，例如检测人体关节点、目标关键特征点等。其思路是在检测头中增加关键点解耦分支，网络在输出目标边界框和类别的同时，也可以回归关键点坐标。
+
+
+
+
+\section{PnP问题及其解法}
+PnP（Perspective-n-Point）问题是在已知若干对空间3D点（空间非合作目标关键点的3D坐标）与其在图像上对应的2D投影点（空间非合作目标关键点的像素坐标）的情况下，求解相机的姿态参数（即位置和平移）的经典问题，如果把相机定义为参考基准则可以通过求解PnP问题得出物体6D姿态。6D姿态解算方法根据求解过程可划分为两大类：基于几何与代数的解法\cite{p3p, EPnP}和基于重投影误差优化的解法\cite{Chen_2022_CVPR,Lipson_2022_CVPR,hu2022perspective}，在传统的算法中重投影误差优化的方法通常是在基于几何与代数解法求解出的值的基础上进行进一步地优化，常见的有莱文贝格-马夸特（Levenberg–Marquardt，LM）优化，高斯牛顿（Gauss–Newton, GN）优化。前者通过解析几何方法或线性代数直接求解姿态，后者则通过建立重投影误差的非线性优化模型迭代逼近最优解。
+\subsection{基于几何与代数的解算方法}
+基于几何与代数的方法通过投影过程中的几何关系，构建出相关的方程，通过一定的代数手段求解方程组从而算出目标的6D姿态。
+\paragraph{P3P算法}
+
+P3P（Perspective-Three-Point）算法\cite{p3p}用于在已知三个空间点及其在图像平面上的投影的情况下，求解相机的6D姿态。该算法基于解析几何，通过建立空间点、相机光心和成像平面之间的几何关系，求解相机的外部参数。
+
+在三维空间中，已知三个不共线的空间点 $\mathbf{P}_1$, $\mathbf{P}_2$, $\mathbf{P}_3$，以及它们在图像平面上的投影点 $\mathbf{p}_1$, $\mathbf{p}_2$, $\mathbf{p}_3$。相机坐标系下，空间点的坐标与其投影点之间满足透视投影关系：
+\begin{equation}
+	s_i \mathbf{p}_i = \mathbf{K} [\mathbf{R} | \mathbf{t}] \mathbf{P}_i, \quad i = 1,2,3
+\end{equation}
+其中，$\mathbf{K}$是相机的内参矩阵，$\mathbf{R}$和$\mathbf{t}$是相机的旋转和平移矩阵，$s_i$是尺度因子。首先，通过相机的内参矩阵对图像点进行归一化，得到归一化的图像坐标 $\mathbf{p}_i'$，
+\begin{equation}
+	\mathbf{p}_i' = \mathbf{K}^{-1} \mathbf{p}_i
+\end{equation}
+由于尺度因子 $s_i$未知，可以将归一化后的图像坐标看作射线方向的单位向量：
+\begin{equation}
+	\mathbf{u}_i = \frac{\mathbf{p}_i'}{\|\mathbf{p}_i'\|}
+\end{equation}
+相机光心 $\mathbf{C}$ 到空间点 $\mathbf{P}_i$ 的距离为 $d_i$，则空间点的位置可以表示为：
+\begin{equation}
+	\mathbf{P}_i = \mathbf{C} + d_i \mathbf{u}_i
+\end{equation}
+已知空间点之间的距离：
+\begin{equation}
+	\begin{aligned}
+		& a = \|\mathbf{P}_2 - \mathbf{P}_3\| \\
+		& b = \|\mathbf{P}_1 - \mathbf{P}_3\| \\
+		& c = \|\mathbf{P}_1 - \mathbf{P}_2\|
+	\end{aligned}
+\end{equation}
+将 $\mathbf{P}_i$ 的表达式代入上述距离公式，得到关于 $d_1$, $d_2$, $d_3$ 的方程：
+\begin{equation}
+	\begin{aligned}
+		& a^2 = \left\| d_2 \mathbf{u}_2 - d_3 \mathbf{u}_3 \right\|^2 \\
+		& b^2 = \left\| d_1 \mathbf{u}_1 - d_3 \mathbf{u}_3 \right\|^2 \\
+		& c^2 = \left\| d_1 \mathbf{u}_1 - d_2 \mathbf{u}_2 \right\|^2
+	\end{aligned}
+\end{equation}
+通过计算各项并利用余弦定理，可以得到：
+\begin{equation}
+	\begin{aligned}
+		& a^2 = d_2^2 + d_3^2 - 2 d_2 d_3 \cos \theta_{23} \\
+		& b^2 = d_1^2 + d_3^2 - 2 d_1 d_3 \cos \theta_{13} \\
+		& c^2 = d_1^2 + d_2^2 - 2 d_1 d_2 \cos \theta_{12}
+	\end{aligned}
+\end{equation}
+其中，$\cos \theta_{ij}$ 为射线方向向量之间的夹角的余弦值，计算方法为：
+\begin{equation}
+	\cos \theta_{ij} = \mathbf{u}_i \cdot \mathbf{u}_j
+\end{equation}
+现在，得到了三个关于 $d_1$, $d_2$, $d_3$ 的方程。由于只有三个未知数，可以通过消元的方法将其转换为一个关于单个变量的四次多项式方程，通常选择 $d_1$ 为主要未知数。
+经过一系列代数运算，可以得到一个标准形式的四次多项式：
+\begin{equation}
+	A d_1^4 + B d_1^3 + C d_1^2 + D d_1 + E = 0
+\end{equation}
+使用四次方程的求解公式，可以得到 $d_1$ 的解，然后代入之前的方程求出 $d_2$ 和 $d_3$。最终，通过~\ref{eq:calc_c}来计算相机光心。
+\begin{equation}
+	\mathbf{C} = \mathbf{P}_i - d_i \mathbf{u}_i
+	\label{eq:calc_c}
+\end{equation}
+ $\mathbf{C}$。由于 $i$ 可以是 1,2,3 中的任意一个，对应不同的 $(d_i, \mathbf{u}_i)$ 组合，实际求解中会根据前后关系选取一致的解。当 $\mathbf{C}$ 确定后，即可得到相机的平移向量 $\mathbf{t}=-\mathbf{R}\mathbf{C}$（若已知 $\mathbf{R}$），或者在更多先验或约束条件下联合求解 $\mathbf{R}$。这样便可完成 P3P 算法对相机位姿（外参）的解析求解。
+
+
+\paragraph{EPnP算法}
+
+EPnP算法\cite{EPnP}是一种在已知$n$个空间点及其对应的图像投影点的情况下，快速求解相机位姿的算法。它通过引入虚拟控制点，将非线性问题线性化，从而提高计算效率。
+
+EPnP算法将所有的空间点表示为$M$个虚拟控制点$\{\mathbf{C}_j\}$的线性组合：
+\begin{equation}
+	\mathbf{P}_i = \sum_{j=1}^{M} \alpha_{ij} \mathbf{C}_j, \quad i = 1,2,\dots,n
+\end{equation}
+其中，$\alpha_{ij}$是权重系数，满足：
+\begin{equation}
+	\sum_{j=1}^{M} \alpha_{ij} = 1
+\end{equation}
+通常，选择$M=4$个控制点，可以是空间点的质心和主方向上的偏移。
+在相机坐标系下，控制点的坐标为$\mathbf{C}_j^{c}$，则空间点的相机坐标为：
+\begin{equation}
+	\mathbf{P}_i^{c} = \sum_{j=1}^{M} \alpha_{ij} \mathbf{C}_j^{c}
+\end{equation}
+根据透视投影模型，空间点的相机坐标与其图像坐标满足：
+\begin{equation}
+	s_i \begin{bmatrix}
+		u_i \\ v_i \\ 1
+	\end{bmatrix} = \mathbf{K} \mathbf{P}_i^{c}
+\end{equation}
+消除尺度因子$s_i$并使用归一化图像坐标$\mathbf{p}_i'$，得到：
+\begin{equation}
+	\mathbf{p}_i' \times \mathbf{P}_i^{c} = \mathbf{0}
+\end{equation}
+将$\mathbf{P}_i^{c}$的表达式代入，得到关于$\mathbf{C}_j^{c}$的线性方程组：
+\begin{equation}
+	\mathbf{p}_i' \times \left( \sum_{j=1}^{M} \alpha_{ij} \mathbf{C}_j^{c} \right ) = \mathbf{0}, \quad i = 1,2,\dots,n
+\end{equation}
+展开后，对于每个点得到两个独立的线性方程，总共$2n$个方程，未知数为$3M$个控制点坐标$\mathbf{C}_j^{c}$。当$n \geq 2M$时，可以通过最小二乘法求解。
+得到控制点的相机坐标$\mathbf{C}_j^{c}$后，可以通过将控制点的世界坐标$\mathbf{C}_j$和相机坐标$\mathbf{C}_j^{c}$进行刚体变换求解相机的旋转矩阵$\mathbf{R}$和平移向量$\mathbf{t}$。这可以通过求解Kabsch算法或SVD分解实现。
+
+\subsection{基于重投影误差优化的方法}
+基于重投影误差优化的方法以重投影误差最小化为目标，通过一定的优化算法来寻找旋转参数和平移参数使得重投影最小化。比如GN\cite{vcolakovic2022hand, zhu2024lodloc}、LM\cite{xu2022rnnpose}等优化算法。
+
+Gauss-Newton 方法是求解非线性最小二乘问题的迭代算法，可视作牛顿法在残差平方和上的一种特例。当最小化目标为 
+\begin{equation}
+	F(\mathbf{x})=\frac{1}{2}\sum_i \bigl\lvert r_i(\mathbf{x})\bigr\rvert^2
+\end{equation}
+时，其梯度和 Hessian 分别为 
+\begin{equation}
+	\nabla F = J^T \mathbf{r}
+\end{equation}
+\begin{equation}
+	\nabla^2 F = J^T J + \sum_i r_i \nabla^2 r_i
+\end{equation}
+Gauss-Newton 忽略二阶项 \(\sum_i r_i \nabla^2 r_i\)（假设当残差不大时影响可忽略），以近似 Hessian 为 \(J^T J\)。
+因此，更新增量可通过解下面的正则方程得到
+\begin{equation}
+	J^T J \,\Delta \mathbf{x} \;=\; -\,J^T \mathbf{r}
+\end{equation}
+\begin{equation}
+	\Delta \mathbf{x} \;=\; -\bigl(J^T J\bigr)^{-1} J^T \mathbf{r}
+\end{equation}
+也可从线性化残差推导，令 
+\begin{equation}
+	\mathbf{r}(\mathbf{x} + \Delta \mathbf{x}) \approx \mathbf{r}(\mathbf{x}) + J\,\Delta \mathbf{x}
+\end{equation}
+
+则目标近似为 \(\bigl\lvert \mathbf{r} + J\,\Delta \mathbf{x}\bigr\rvert^2\)，对 \(\Delta \mathbf{x}\) 求极值即可导出上述正则方程。直观来说，Gauss-Newton 每次通过最小二乘解一步到位地逼近当前点的二次近似解。雅可比矩阵 \(J\) 的计算在 6D 姿态问题中与 LM 方法类似，需对旋转和平移的变化求导。由于不引入附加阻尼项，GN 方法每步直接按 \(\bigl(J^T J\bigr)^{-1} J^T \mathbf{r}\) 更新参数。
+
+
+Levenberg-Marquardt（LM）算法通过在 Gauss-Newton 法的正则方程中加入阻尼因子来实现稳健更新。给定残差向量 
+\(\mathbf{r}(\mathbf{x}) = [r_1(\mathbf{x}), \dots, r_m(\mathbf{x})]^T\) 
+（例如每个 \(r_i\) 可以是第 \(i\) 个观测点的重投影误差），以及参数 \(\mathbf{x}\in \mathbb{R}^n\) 表示 6D 姿态（3 维平移 + 3 维旋转参数），定义代价函数为残差平方和 
+\begin{equation}
+	F(\mathbf{x}) = \tfrac{1}{2}\sum_{i=1}^m \bigl\lvert r_i(\mathbf{x})\bigr\rvert^2
+\end{equation}
+LM 在第 \(k\) 次迭代时近似地线性化残差：
+\begin{equation}
+	\mathbf{r}(\mathbf{x}+\Delta \mathbf{x}) \approx \mathbf{r}(\mathbf{x}) + J(\mathbf{x}) \,\Delta \mathbf{x}
+\end{equation}
+其中 \(J(\mathbf{x})\) 是残差对参数的雅可比矩阵 \(J_{ij} = \partial r_i/\partial x_j\)。为求解 \(\Delta \mathbf{x}\)，LM 引入一个阻尼项 \(\lambda\) 改写正则方程为
+\begin{equation}
+	\bigl(J^T J + \lambda I\bigr)\,\Delta \mathbf{x} \;=\; -\,J^T \mathbf{r}
+\end{equation}
+\begin{equation}
+	\Delta \mathbf{x} 
+	= -\bigl(J^{T} J + \lambda I \bigr)^{-1} \, J^{T} \mathbf{r}
+\end{equation}
+其中 \(J\) 和 \(\mathbf{r}\) 都在当前迭代点 \(\mathbf{x}_k\) 处计算。这里 \(J^T J\) 近似代替了真实 Hessian 矩阵，\(I\) 是单位矩阵，\(\lambda\) 控制了更新步长的调整：当 \(\lambda=0\) 时，退化为 Gauss-Newton；若 \(\lambda\) 很大，则 \(\bigl(J^T J + \lambda I\bigr)^{-1} \approx \tfrac{1}{\lambda}I\)，此时 
+\(\Delta \mathbf{x} \approx -\tfrac{1}{\lambda} J^T \mathbf{r}\)，
+相当于沿负梯度方向进行小步长更新（梯度下降）。雅可比矩阵 \(J\) 的具体计算取决于参数化方式，例如 6D 姿态中的旋转部分常用轴角的指数映射（李代数）来计算微小旋转对重投影误差的偏导数。
+
+\section{卡尔曼滤波}
+
+卡尔曼滤波在最小方差意义下对线性高斯系统状态进行最优估计\cite{kalman1960new}。如图\ref{fig:KalmanFilter}所示，它通过在每一时刻交替执行预测和更新两大过程，递推地融合系统动力学模型与测量信息，从而获得当前时刻的后验状态估计及其协方差。为便于说明，下文以离散线性系统  
+\begin{equation}
+	x_n = F_n x_{n-1} + w_{n-1},\qquad
+	z_n = H_n x_n + v_n
+\end{equation}
+为例展开，其中 \(w_{n-1}\sim\mathcal N(0,Q_{n-1})\)，\(v_n\sim\mathcal N(0,R_n)\)。
+
+初始化系统状态与协方差  
+在滤波开始前，需要给出初始状态的期望和不确定度。这些先验量可来自系统设计值、先前实验数据或专家经验。  
+\begin{equation}
+	\hat x_{0|0}=E[x_0], \qquad
+	P_{0|0}=E\!\bigl[(x_0-\hat x_{0|0})(x_0-\hat x_{0|0})^\mathrm T\bigr]
+\end{equation}
+
+预测系统状态与协方差  
+根据状态转移方程，将上一步的后验估计推进到当前时刻，得到对当前状态的先验预测，并同时传播协方差以反映过程噪声带来的不确定度增长。  
+\begin{align}
+	\hat x_{n|n-1} &= F_n \hat x_{\,n-1|n-1} \\
+	P_{n|n-1}      &= F_n P_{\,n-1|n-1} F_n^\mathrm T + Q_{n-1}
+\end{align}
+
+计算卡尔曼增益  
+卡尔曼增益衡量了先验预测与新测量之间的相对可信度。它在最小方差意义下给出了两者的最优加权系数。  
+\begin{equation}
+	K_n = P_{n|n-1} H_n^\mathrm T \!\bigl(H_n P_{n|n-1} H_n^\mathrm T + R_n\bigr)^{-1}
+\end{equation}
+
+更新系统状态与协方差  
+利用测量残差 \(z_n-H_n\hat x_{n|n-1}\) 对先验预测进行修正，得到当前时刻的后验估计；同时更新协方差以体现不确定度的减少。  
+\begin{align}
+	\hat x_{n|n} &= \hat x_{n|n-1} + K_n\!\bigl(z_n - H_n \hat x_{n|n-1}\bigr)\\
+	P_{n|n}      &= (I - K_n H_n) P_{n|n-1}
+\end{align}
+
+输出的系统状态估计  
+当前时刻的后验状态 \(\hat x_{n|n}\) 及协方差 \(P_{n|n}\) 可直接用作控制、导航或后续推断的输入；同时，它们又作为下一时刻“预测系统状态与协方差”步骤的先验输入。  
+
+\begin{figure}[htbp]
+	\centering
+	\includegraphics[width=0.6\textwidth]{Img/KalmanFilter.png}
+	\caption{卡尔曼滤波流程示意图}
+	\label{fig:KalmanFilter}
+\end{figure}
+
+卡尔曼滤波在每个时刻包含预测与更新两个阶段。预测阶段根据模型对下一时刻的状态和协方差做外推，更新阶段结合新的测量值对状态和协方差做修正。随着时序的不断推进，可获得最小均方误差意义下对系统状态的最优估计。
+
+在处理运动目标时，卡尔曼滤波的滤波作用主要体现在对噪声的有效抑制与对目标运动的平滑追踪两个方面。首先，卡尔曼滤波器在预测阶段基于目标的运动学模型（例如匀速或匀加速假设）对下一个时刻的状态做外推，从而在连续时域内保持对目标运动趋势的跟踪。待新的测量值到达后，滤波器再将先验预测与当前测量进行加权融合。卡尔曼增益在融合过程中起到自适应调节的作用：若测量噪声较大，滤波器倾向于对当前测量保持谨慎；若测量较为可靠，则会在更大程度上修正预测偏差。由于这个动态权衡机制，卡尔曼滤波能够在各时刻都以最小均方误差的方式结合历史信息和当前测量，从而在动态跟踪目标的同时抑制瞬时噪声或异常测量引起的跳变，最终实现对运动状态的平滑估计与有效滤波。
+
+在实际应用中，如果系统存在非线性，线性卡尔曼滤波会受到较大限制。对此，通常可采用扩展卡尔曼滤波（Extended Kalman Filter, EKF）或无迹卡尔曼滤波（Unscented Kalman Filter, UKF）对非线性状态进行估计。前者通过对非线性函数进行一阶泰勒展开实现线性化，从而将卡尔曼滤波框架应用于非线性系统；后者则采用无迹变换来对状态和协方差进行更准确的统计线性化，并在一定程度上避免了高阶项截断所带来的误差。这两种滤波器在非线性场景下具有更好的估计性能，是对线性卡尔曼滤波在实践中的有效补充。
+
+
+
+
+\section{本章小结}
+\label{sec:summary}
+
+本章围绕 6D 姿态估计所需的关键理论展开，首先阐明了 6D 姿态的概念及其常见表示方法，并比较了欧拉角、轴–角、四元数与齐次变换矩阵在自由度、数值稳定性与应用场景上的差异。随后，介绍了针孔相机成像模型及其常用的径向、切向畸变校正公式，为后续 PnP 过程中的重投影误差建立准确的投影关系提供基础。
+在特征表示方面，分别论述了基于 CNN 的通道／空间再加权注意力机制与基于 Transformer 的全局自注意力方法，并指出 Transformer 在捕捉远程依赖及大规模视觉任务中的优势。接着，总结了 YOLO 系列算法的发展脉络及其向关键点检测领域的衍生，实现了目标检测与关键点定位的端到端统一框架。
+针对 6D 姿态解算，详细梳理了基于几何与代数和基于重投影误差优化两大类方法的核心思路与数学推导。最后，通过线性卡尔曼滤波及其非线性扩展（EKF、UKF）的递推框架，说明了在动态场景中对姿态序列进行平滑和噪声抑制的原理。本章为后续章节中关键点检测网络的设计、6D 姿态解算算法的实现以及姿态滤波方案的构建奠定了必要的理论与方法基础。
